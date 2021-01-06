@@ -1,15 +1,16 @@
 #include <unordered_map>
 
-#include "Common/Hook.h"
-#include "Common/Log.h"
-#include "Gdi/AccessGuard.h"
-#include "Gdi/Dc.h"
-#include "Gdi/DcFunctions.h"
-#include "Gdi/Gdi.h"
-#include "Gdi/Region.h"
-#include "Gdi/VirtualScreen.h"
-#include "Gdi/Window.h"
-#include "Win32/DisplayMode.h"
+#include <Common/Hook.h>
+#include <Common/Log.h>
+#include <Gdi/AccessGuard.h>
+#include <Gdi/Dc.h>
+#include <Gdi/DcFunctions.h>
+#include <Gdi/Font.h>
+#include <Gdi/Gdi.h>
+#include <Gdi/Region.h>
+#include <Gdi/VirtualScreen.h>
+#include <Gdi/Window.h>
+#include <Win32/DisplayMode.h>
 
 namespace
 {
@@ -53,6 +54,7 @@ namespace
 	};
 
 	std::unordered_map<void*, const char*> g_funcNames;
+	thread_local bool g_redirectToDib = true;
 
 	template <typename OrigFuncPtr, OrigFuncPtr origFunc, typename... Params>
 	HDC getDestinationDc(Params... params);
@@ -82,6 +84,16 @@ namespace
 		return hasDisplayDcArg(t) || hasDisplayDcArg(params...);
 	}
 
+	bool lpToScreen(HWND hwnd, HDC dc, POINT& p)
+	{
+		LPtoDP(dc, &p, 1);
+		RECT wr = {};
+		GetWindowRect(hwnd, &wr);
+		p.x += wr.left;
+		p.y += wr.top;
+		return true;
+	}
+
 	template <typename T>
 	T replaceDc(T t)
 	{
@@ -104,8 +116,9 @@ namespace
 
 		if (hasDisplayDcArg(params...))
 		{
+			D3dDdi::ScopedCriticalSection lock;
 			const bool isReadOnlyAccess = !hasDisplayDcArg(getDestinationDc<OrigFuncPtr, origFunc>(params...));
-			Gdi::GdiAccessGuard accessGuard(isReadOnlyAccess ? Gdi::ACCESS_READ : Gdi::ACCESS_WRITE);
+			Gdi::AccessGuard accessGuard(isReadOnlyAccess ? Gdi::ACCESS_READ : Gdi::ACCESS_WRITE);
 			return LOG_RESULT(Compat::getOrigFuncPtr<OrigFuncPtr, origFunc>()(replaceDc(params)...));
 		}
 
@@ -128,7 +141,7 @@ namespace
 				RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE);
 			}
 			else if (GetCurrentThreadId() == GetWindowThreadProcessId(hwnd, nullptr) &&
-				LPtoDP(hdc, &p, 1) &&
+				lpToScreen(hwnd, hdc, p) &&
 				HTMENU == SendMessage(hwnd, WM_NCHITTEST, 0, (p.y << 16) | (p.x & 0xFFFF)))
 			{
 				WINDOWINFO wi = {};
@@ -140,7 +153,8 @@ namespace
 			}
 			else
 			{
-				Gdi::GdiAccessGuard accessGuard(Gdi::ACCESS_WRITE);
+				D3dDdi::ScopedCriticalSection lock;
+				Gdi::AccessGuard accessGuard(Gdi::ACCESS_WRITE);
 				return LOG_RESULT(CALL_ORIG_FUNC(ExtTextOutW)(replaceDc(hdc), x, y, options, lprect, lpString, c, lpDx));
 			}
 		}
@@ -152,10 +166,17 @@ namespace
 		return LOG_RESULT(TRUE);
 	}
 
+	template <typename OrigFuncPtr, OrigFuncPtr origFunc, typename Result, typename... Params>
+	Result WINAPI compatGdiTextDcFunc(HDC dc, Params... params)
+	{
+		Gdi::Font::Mapper fontMapper(dc);
+		return compatGdiDcFunc<OrigFuncPtr, origFunc, Result>(dc, params...);
+	}
+
 	HBITMAP WINAPI createCompatibleBitmap(HDC hdc, int cx, int cy)
 	{
 		LOG_FUNC("CreateCompatibleBitmap", hdc, cx, cy);
-		if (Gdi::isDisplayDc(hdc))
+		if (g_redirectToDib && Gdi::isDisplayDc(hdc))
 		{
 			return LOG_RESULT(Gdi::VirtualScreen::createOffScreenDib(cx, cy));
 		}
@@ -166,12 +187,13 @@ namespace
 		const void* lpbInit, const BITMAPINFO* lpbmi, UINT fuUsage)
 	{
 		LOG_FUNC("CreateDIBitmap", hdc, lpbmih, fdwInit, lpbInit, lpbmi, fuUsage);
-		if (lpbmih && (!(fdwInit & CBM_INIT) || lpbInit && lpbmi))
+		const DWORD CBM_CREATDIB = 2;
+		if (g_redirectToDib && !(fdwInit & CBM_CREATDIB) && lpbmih && Gdi::isDisplayDc(hdc))
 		{
-			HBITMAP bitmap = Gdi::VirtualScreen::createOffScreenDib(lpbmih->biWidth, std::abs(lpbmih->biHeight));
-			if (bitmap && (fdwInit & CBM_INIT))
+			HBITMAP bitmap = Gdi::VirtualScreen::createOffScreenDib(lpbmi->bmiHeader.biWidth, lpbmi->bmiHeader.biHeight);
+			if (bitmap && lpbInit && lpbmi)
 			{
-				SetDIBits(hdc, bitmap, 0, std::abs(lpbmih->biHeight), lpbInit, lpbmi, fuUsage);
+				SetDIBits(hdc, bitmap, 0, std::abs(lpbmi->bmiHeader.biHeight), lpbInit, lpbmi, fuUsage);
 			}
 			return LOG_RESULT(bitmap);
 		}
@@ -181,7 +203,7 @@ namespace
 	HBITMAP WINAPI createDiscardableBitmap(HDC hdc, int nWidth, int nHeight)
 	{
 		LOG_FUNC("CreateDiscardableBitmap", hdc, nWidth, nHeight);
-		if (Gdi::isDisplayDc(hdc))
+		if (g_redirectToDib && Gdi::isDisplayDc(hdc))
 		{
 			return LOG_RESULT(Gdi::VirtualScreen::createOffScreenDib(nWidth, nHeight));
 		}
@@ -200,7 +222,7 @@ namespace
 		GetWindowThreadProcessId(hwnd, &windowPid);
 		if (GetCurrentProcessId() != windowPid ||
 			!IsWindowVisible(hwnd) ||
-			(GetWindowLongPtr(hwnd, GWL_EXSTYLE) & (WS_EX_LAYERED | WS_EX_TRANSPARENT)))
+			(CALL_ORIG_FUNC(GetWindowLongA)(hwnd, GWL_EXSTYLE) & (WS_EX_LAYERED | WS_EX_TRANSPARENT)))
 		{
 			return TRUE;
 		}
@@ -216,6 +238,12 @@ namespace
 	OrigFuncPtr getCompatGdiDcFuncPtr(FuncPtr<Result, Params...>)
 	{
 		return &compatGdiDcFunc<OrigFuncPtr, origFunc, Result, Params...>;
+	}
+
+	template <typename OrigFuncPtr, OrigFuncPtr origFunc, typename Result, typename... Params>
+	OrigFuncPtr getCompatGdiTextDcFuncPtr(FuncPtr<Result, HDC, Params...>)
+	{
+		return &compatGdiTextDcFunc<OrigFuncPtr, origFunc, Result, Params...>;
 	}
 
 	HDC getFirstDc()
@@ -277,6 +305,17 @@ namespace
 			moduleName, funcName, getCompatGdiDcFuncPtr<OrigFuncPtr, origFunc>(origFunc));
 	}
 
+	template <typename OrigFuncPtr, OrigFuncPtr origFunc>
+	void hookGdiTextDcFunction(const char* moduleName, const char* funcName)
+	{
+#ifdef DEBUGLOGS
+		g_funcNames[origFunc] = funcName;
+#endif
+
+		Compat::hookFunction<OrigFuncPtr, origFunc>(
+			moduleName, funcName, getCompatGdiTextDcFuncPtr<OrigFuncPtr, origFunc>(origFunc));
+	}
+
 	int WINAPI getRandomRgn(HDC hdc, HRGN hrgn, INT iNum)
 	{
 		int result = CALL_ORIG_FUNC(GetRandomRgn)(hdc, hrgn, iNum);
@@ -286,7 +325,7 @@ namespace
 		}
 
 		HWND hwnd = WindowFromDC(hdc);
-		if (!hwnd || hwnd == GetDesktopWindow() || (GetWindowLongPtr(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED))
+		if (!hwnd || hwnd == GetDesktopWindow() || (CALL_ORIG_FUNC(GetWindowLongA)(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED))
 		{
 			return 1;
 		}
@@ -295,6 +334,114 @@ namespace
 		EnumWindows(excludeRgnForOverlappingWindow, reinterpret_cast<LPARAM>(&args));
 
 		return 1;
+	}
+
+	template <typename WndClass, typename WndClassEx>
+	ATOM WINAPI registerClass(const WndClass* lpWndClass, ATOM(WINAPI* origRegisterClass)(const WndClass*),
+		ATOM(WINAPI* registerClassEx)(const WndClassEx*))
+	{
+		if (!lpWndClass)
+		{
+			return origRegisterClass(lpWndClass);
+		}
+
+		WndClassEx wc = {};
+		wc.cbSize = sizeof(wc);
+		memcpy(&wc.style, &lpWndClass->style, sizeof(WndClass));
+		return registerClassEx(&wc);
+	}
+
+	template <typename WndClassEx>
+	ATOM registerClassEx(const WndClassEx* lpWndClassEx,
+		ATOM(WINAPI* origRegisterClassEx)(const WndClassEx*),
+		decltype(&SetClassLong) origSetClassLong,
+		decltype(&DefWindowProc) origDefWindowProc)
+	{
+		if (!lpWndClassEx || (!lpWndClassEx->hIcon && !lpWndClassEx->hIconSm))
+		{
+			return origRegisterClassEx(lpWndClassEx);
+		}
+
+		WndClassEx wc = *lpWndClassEx;
+		wc.lpfnWndProc = origDefWindowProc;
+		wc.hIcon = nullptr;
+		wc.hIconSm = nullptr;
+
+		ATOM atom = origRegisterClassEx(&wc);
+		if (atom)
+		{
+			HWND hwnd = CreateWindow(reinterpret_cast<LPCSTR>(atom), "", 0, 0, 0, 0, 0, nullptr, nullptr, nullptr, nullptr);
+			if (!hwnd)
+			{
+				UnregisterClass(reinterpret_cast<LPCSTR>(atom), GetModuleHandle(nullptr));
+				return origRegisterClassEx(lpWndClassEx);
+			}
+
+			if (lpWndClassEx->hIcon)
+			{
+				SetClassLong(hwnd, GCL_HICON, reinterpret_cast<LONG>(lpWndClassEx->hIcon));
+			}
+			if (lpWndClassEx->hIconSm)
+			{
+				SetClassLong(hwnd, GCL_HICONSM, reinterpret_cast<LONG>(lpWndClassEx->hIconSm));
+			}
+
+			origSetClassLong(hwnd, GCL_WNDPROC, reinterpret_cast<LONG>(lpWndClassEx->lpfnWndProc));
+			SetWindowLong(hwnd, GWL_WNDPROC, reinterpret_cast<LONG>(CALL_ORIG_FUNC(DefWindowProcA)));
+			DestroyWindow(hwnd);
+		}
+
+		return atom;
+	}
+
+	ATOM WINAPI registerClassA(const WNDCLASSA* lpWndClass)
+	{
+		LOG_FUNC("RegisterClassA", lpWndClass);
+		return LOG_RESULT(registerClass(lpWndClass, CALL_ORIG_FUNC(RegisterClassA), RegisterClassExA));
+	}
+
+	ATOM WINAPI registerClassW(const WNDCLASSW* lpWndClass)
+	{
+		LOG_FUNC("RegisterClassW", lpWndClass);
+		return LOG_RESULT(registerClass(lpWndClass, CALL_ORIG_FUNC(RegisterClassW), RegisterClassExW));
+	}
+
+	ATOM WINAPI registerClassExA(const WNDCLASSEXA* lpWndClassEx)
+	{
+		LOG_FUNC("RegisterClassExA", lpWndClassEx);
+		return LOG_RESULT(registerClassEx(lpWndClassEx, CALL_ORIG_FUNC(RegisterClassExA), CALL_ORIG_FUNC(SetClassLongA),
+			CALL_ORIG_FUNC(DefWindowProcA)));
+	}
+
+	ATOM WINAPI registerClassExW(const WNDCLASSEXW* lpWndClassEx)
+	{
+		LOG_FUNC("RegisterClassExW", lpWndClassEx);
+		return LOG_RESULT(registerClassEx(lpWndClassEx, CALL_ORIG_FUNC(RegisterClassExW), CALL_ORIG_FUNC(SetClassLongW),
+			CALL_ORIG_FUNC(DefWindowProcW)));
+	}
+
+	DWORD WINAPI setClassLong(HWND hWnd, int nIndex, LONG dwNewLong, decltype(&SetClassLong) origSetClassLong)
+	{
+		if (GCL_HICON == nIndex || GCL_HICONSM == nIndex)
+		{
+			g_redirectToDib = false;
+			DWORD result = origSetClassLong(hWnd, nIndex, dwNewLong);
+			g_redirectToDib = true;
+			return result;
+		}
+		return origSetClassLong(hWnd, nIndex, dwNewLong);
+	}
+
+	DWORD WINAPI setClassLongA(HWND hWnd, int nIndex, LONG dwNewLong)
+	{
+		LOG_FUNC("setClassLongA", hWnd, nIndex, dwNewLong);
+		return LOG_RESULT(setClassLong(hWnd, nIndex, dwNewLong, CALL_ORIG_FUNC(SetClassLongA)));
+	}
+
+	DWORD WINAPI setClassLongW(HWND hWnd, int nIndex, LONG dwNewLong)
+	{
+		LOG_FUNC("setClassLongW", hWnd, nIndex, dwNewLong);
+		return LOG_RESULT(setClassLong(hWnd, nIndex, dwNewLong, CALL_ORIG_FUNC(SetClassLongW)));
 	}
 
 	HWND WINAPI windowFromDc(HDC dc)
@@ -307,8 +454,8 @@ namespace
 	hookGdiDcFunction<decltype(&func), &func>(#module, #func)
 
 #define HOOK_GDI_TEXT_DC_FUNCTION(module, func) \
-	HOOK_GDI_DC_FUNCTION(module, func##A); \
-	HOOK_GDI_DC_FUNCTION(module, func##W)
+	hookGdiTextDcFunction<decltype(&func##A), &func##A>(#module, #func "A"); \
+	hookGdiTextDcFunction<decltype(&func##W), &func##W>(#module, #func "W")
 
 namespace Gdi
 {
@@ -414,6 +561,14 @@ namespace Gdi
 			// Undocumented functions
 			HOOK_GDI_DC_FUNCTION(gdi32, GdiDrawStream);
 			HOOK_GDI_DC_FUNCTION(gdi32, PolyPatBlt);
+
+			// Window class functions
+			HOOK_FUNCTION(user32, RegisterClassA, registerClassA);
+			HOOK_FUNCTION(user32, RegisterClassW, registerClassW);
+			HOOK_FUNCTION(user32, RegisterClassExA, registerClassExA);
+			HOOK_FUNCTION(user32, RegisterClassExW, registerClassExW);
+			HOOK_FUNCTION(user32, SetClassLongA, setClassLongA);
+			HOOK_FUNCTION(user32, SetClassLongW, setClassLongW);
 		}
 	}
 }

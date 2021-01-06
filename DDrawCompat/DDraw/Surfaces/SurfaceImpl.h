@@ -12,27 +12,14 @@ namespace DDraw
 	class Surface;
 
 	template <typename TSurface>
-	class SurfaceImpl2
-	{
-	public:
-		SurfaceImpl2() : m_data(nullptr) {}
-
-		virtual HRESULT GetDDInterface(TSurface* This, LPVOID* lplpDD);
-
-	protected:
-		friend class Surface;
-
-		Surface* m_data;
-	};
-
-	template <typename TSurface>
-	class SurfaceImpl : public SurfaceImpl2<TSurface>
+	class SurfaceImpl
 	{
 	public:
 		typedef typename Types<TSurface>::TSurfaceDesc TSurfaceDesc;
 		typedef typename Types<TSurface>::TDdsCaps TDdsCaps;
 		typedef typename Types<TSurface>::TUnlockParam TUnlockParam;
 
+		SurfaceImpl(Surface* data);
 		virtual ~SurfaceImpl();
 
 		virtual HRESULT Blt(TSurface* This, LPRECT lpDestRect, TSurface* lpDDSrcSurface, LPRECT lpSrcRect,
@@ -48,20 +35,18 @@ namespace DDraw
 		virtual HRESULT IsLost(TSurface* This);
 		virtual HRESULT Lock(TSurface* This, LPRECT lpDestRect, TSurfaceDesc* lpDDSurfaceDesc,
 			DWORD dwFlags, HANDLE hEvent);
+		virtual HRESULT QueryInterface(TSurface* This, REFIID riid, LPVOID* obp);
 		virtual HRESULT ReleaseDC(TSurface* This, HDC hDC);
 		virtual HRESULT Restore(TSurface* This);
 		virtual HRESULT SetPalette(TSurface* This, LPDIRECTDRAWPALETTE lpDDPalette);
 		virtual HRESULT Unlock(TSurface* This, TUnlockParam lpRect);
 
 	protected:
+		bool waitForFlip(TSurface* This, DWORD flags, DWORD waitFlag, DWORD doNotWaitFlag);
+
 		static const Vtable<TSurface>& s_origVtable;
 
 	private:
-		bool bltRetry(TSurface*& dstSurface, RECT*& dstRect,
-			TSurface*& srcSurface, RECT*& srcRect, bool isTransparentBlt,
-			const std::function<HRESULT()>& blt);
-		bool prepareBltRetrySurface(TSurface*& surface, RECT*& rect,
-			const TSurfaceDesc& desc, bool isTransparentBlt, bool isCopyNeeded);
-		void replaceWithVidMemSurface(TSurface*& surface, RECT*& rect, const TSurfaceDesc& desc);
+		Surface* m_data;
 	};
 }

@@ -1,9 +1,9 @@
 #include "Common/Hook.h"
-#include "DDraw/Surfaces/PrimarySurface.h"
 #include "Gdi/Gdi.h"
 #include "Gdi/Region.h"
 #include "Gdi/TitleBar.h"
 #include "Gdi/VirtualScreen.h"
+#include "Win32/DisplayMode.h"
 
 namespace
 {
@@ -23,7 +23,7 @@ namespace Gdi
 		m_hwnd(hwnd), m_compatDc(compatDc), m_buttonWidth(0), m_buttonHeight(0), m_tbi(),
 		m_windowRect(), m_hasIcon(false), m_hasTitleBar(false)
 	{
-		m_hasTitleBar = 0 != (GetWindowLongPtr(hwnd, GWL_STYLE) & WS_CAPTION);
+		m_hasTitleBar = 0 != (CALL_ORIG_FUNC(GetWindowLongA)(hwnd, GWL_STYLE) & WS_CAPTION);
 		if (!m_hasTitleBar)
 		{
 			return;
@@ -98,7 +98,7 @@ namespace Gdi
 		{
 			flags |= DC_ACTIVE;
 		}
-		if (DDraw::PrimarySurface::getDesc().ddpfPixelFormat.dwRGBBitCount > 8)
+		if (Win32::DisplayMode::getBpp() > 8)
 		{
 			flags |= DC_GRADIENT;
 		}

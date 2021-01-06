@@ -1,40 +1,52 @@
 #pragma once
 
-#include <ddraw.h>
 #include <fstream>
 #include <functional>
 #include <ostream>
+#include <string>
 #include <type_traits>
+#include <utility>
 
-#include "Common/ScopedCriticalSection.h"
+#include <Windows.h>
 
+#include <Common/ScopedCriticalSection.h>
+#include <DDraw/Log.h>
+#include <Win32/Log.h>
+
+#ifdef DEBUGLOGS
+#define LOG_DEBUG Compat::Log()
 #define LOG_FUNC(...) Compat::LogFunc logFunc(__VA_ARGS__)
 #define LOG_RESULT(...) logFunc.setResult(__VA_ARGS__)
+#else
+#define LOG_DEBUG if (false) Compat::Log()
+#define LOG_FUNC(...)
+#define LOG_RESULT(...) __VA_ARGS__
+#endif
 
 #define LOG_ONCE(msg) \
-	static bool isAlreadyLogged##__LINE__ = false; \
-	if (!isAlreadyLogged##__LINE__) \
 	{ \
-		Compat::Log() << msg; \
-		isAlreadyLogged##__LINE__ = true; \
+		static bool isAlreadyLogged = false; \
+		if (!isAlreadyLogged) \
+		{ \
+			Compat::Log() << msg; \
+			isAlreadyLogged = true; \
+		} \
 	}
 
+#define LOG_CONST_CASE(constant) case constant: return os << #constant;
+
+std::ostream& operator<<(std::ostream& os, std::nullptr_t);
 std::ostream& operator<<(std::ostream& os, const char* str);
 std::ostream& operator<<(std::ostream& os, const unsigned char* data);
 std::ostream& operator<<(std::ostream& os, const WCHAR* wstr);
-std::ostream& operator<<(std::ostream& os, const DEVMODEA& dm);
-std::ostream& operator<<(std::ostream& os, const DEVMODEW& dm);
-std::ostream& operator<<(std::ostream& os, const RECT& rect);
-std::ostream& operator<<(std::ostream& os, HDC__& dc);
-std::ostream& operator<<(std::ostream& os, HRGN__& rgn);
-std::ostream& operator<<(std::ostream& os, HWND__& hwnd);
-std::ostream& operator<<(std::ostream& os, const DDSCAPS& caps);
-std::ostream& operator<<(std::ostream& os, const DDSCAPS2& caps);
-std::ostream& operator<<(std::ostream& os, const DDPIXELFORMAT& pf);
-std::ostream& operator<<(std::ostream& os, const DDSURFACEDESC& sd);
-std::ostream& operator<<(std::ostream& os, const DDSURFACEDESC2& sd);
-std::ostream& operator<<(std::ostream& os, const CWPSTRUCT& cwrp);
-std::ostream& operator<<(std::ostream& os, const CWPRETSTRUCT& cwrp);
+
+template <typename T1, typename T2>
+std::ostream& operator<<(std::ostream & os, const std::pair<T1, T2> & pair)
+{
+	return Compat::LogStruct(os)
+		<< pair.first
+		<< pair.second;
+}
 
 namespace Compat
 {
@@ -42,6 +54,8 @@ namespace Compat
 
 	namespace detail
 	{
+		using ::operator<<;
+
 		template <typename T>
 		struct Hex
 		{
@@ -152,6 +166,7 @@ namespace Compat
 			return *this;
 		}
 
+		static void initLogging(std::string processName);
 		static bool isPointerDereferencingAllowed() { return s_isLeaveLog || 0 == s_outParamDepth; }
 
 	protected:
@@ -187,28 +202,18 @@ namespace Compat
 		ScopedCriticalSection m_lock;
 
 		static thread_local DWORD s_indent;
+		static thread_local DWORD s_outParamDepth;
+		static thread_local bool s_isLeaveLog;
 
 		static std::ofstream s_logFile;
-		static DWORD s_outParamDepth;
-		static bool s_isLeaveLog;
 	};
-
-	class LogStruct : public detail::LogFirstParam
-	{
-	public:
-		LogStruct(std::ostream& os) : detail::LogFirstParam(os) { m_os << '{'; }
-		~LogStruct() { m_os << '}'; }
-	};
-
-#ifdef DEBUGLOGS
-	typedef Log LogDebug;
 
 	class LogFunc
 	{
 	public:
 		template <typename... Params>
 		LogFunc(const char* funcName, Params... params)
-			: m_printCall([=](Log& log) { log << funcName << '('; toList(log, params...); log << ')'; })
+			: m_printCall([=](Log& log) { log << funcName << '('; log.toList(params...); log << ')'; })
 		{
 			Log log;
 			log << "> ";
@@ -218,6 +223,7 @@ namespace Compat
 
 		~LogFunc()
 		{
+			Log::s_isLeaveLog = true;
 			Log::s_indent -= 2;
 			Log log;
 			log << "< ";
@@ -228,6 +234,7 @@ namespace Compat
 				log << " = ";
 				m_printResult(log);
 			}
+			Log::s_isLeaveLog = false;
 		}
 
 		template <typename T>
@@ -238,48 +245,16 @@ namespace Compat
 		}
 
 	private:
-		void toList(Log&)
-		{
-		}
-
-		template <typename Param>
-		void toList(Log& log, Param param)
-		{
-			log << param;
-		}
-
-		template <typename Param, typename... Params>
-		void toList(Log& log, Param firstParam, Params... remainingParams)
-		{
-			log << firstParam << ", ";
-			toList(log, remainingParams...);
-		}
-
 		std::function<void(Log&)> m_printCall;
 		std::function<void(Log&)> m_printResult;
 	};
-#else
-	class LogDebug
+
+	class LogStruct : public detail::LogFirstParam
 	{
 	public:
-		template <typename T> LogDebug& operator<<(const T&) { return *this; }
+		LogStruct(std::ostream& os) : detail::LogFirstParam(os) { m_os << '{'; }
+		~LogStruct() { m_os << '}'; }
 	};
-
-	class LogFunc
-	{
-	public:
-		template <typename... Params>
-		LogFunc(const char* /*funcName*/, Params...)
-		{
-		}
-
-		template <typename T>
-		T setResult(T result)
-		{
-			return result;
-		}
-	};
-#endif
 }
 
 template <typename T>
@@ -298,7 +273,7 @@ operator<<(std::ostream& os, T* t)
 		return os << "null";
 	}
 
-	if (!Compat::Log::isPointerDereferencingAllowed())
+	if (!Compat::Log::isPointerDereferencingAllowed() || reinterpret_cast<DWORD>(t) <= 0xFFFF)
 	{
 		return os << static_cast<const void*>(t);
 	}
@@ -316,10 +291,10 @@ std::ostream& operator<<(std::ostream& os, T** t)
 
 	os << static_cast<const void*>(t);
 
-	if (Compat::Log::isPointerDereferencingAllowed())
+	if (!Compat::Log::isPointerDereferencingAllowed() || reinterpret_cast<DWORD>(t) <= 0xFFFF)
 	{
-		os << '=' << *t;
+		return os;
 	}
 
-	return os;
+	return os << '=' << *t;
 }

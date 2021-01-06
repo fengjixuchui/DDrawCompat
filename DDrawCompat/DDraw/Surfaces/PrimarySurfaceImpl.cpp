@@ -1,15 +1,16 @@
-#include "Common/CompatPtr.h"
-#include "D3dDdi/KernelModeThunks.h"
-#include "DDraw/DirectDrawClipper.h"
-#include "DDraw/DirectDrawPalette.h"
-#include "DDraw/DirectDrawSurface.h"
-#include "DDraw/RealPrimarySurface.h"
-#include "DDraw/Surfaces/PrimarySurface.h"
-#include "DDraw/Surfaces/PrimarySurfaceImpl.h"
-#include "Dll/Procs.h"
-#include "Gdi/Gdi.h"
-#include "Gdi/Region.h"
-#include "Gdi/VirtualScreen.h"
+#include <Common/CompatPtr.h>
+#include <D3dDdi/KernelModeThunks.h>
+#include <D3dDdi/ScopedCriticalSection.h>
+#include <DDraw/DirectDrawClipper.h>
+#include <DDraw/DirectDrawPalette.h>
+#include <DDraw/DirectDrawSurface.h>
+#include <DDraw/RealPrimarySurface.h>
+#include <DDraw/Surfaces/PrimarySurface.h>
+#include <DDraw/Surfaces/PrimarySurfaceImpl.h>
+#include <Dll/Dll.h>
+#include <Gdi/Gdi.h>
+#include <Gdi/Region.h>
+#include <Gdi/VirtualScreen.h>
 
 namespace
 {
@@ -29,6 +30,7 @@ namespace
 			return;
 		}
 
+		D3dDdi::ScopedCriticalSection lock;
 		Gdi::Region clipRgn(DDraw::DirectDrawClipper::getClipRgn(*clipper));
 		RECT monitorRect = D3dDdi::KernelModeThunks::getMonitorRect();
 		RECT virtualScreenBounds = Gdi::VirtualScreen::getBounds();
@@ -47,7 +49,7 @@ namespace
 		}
 
 		CompatPtr<IDirectDrawClipper> gdiClipper;
-		CALL_ORIG_PROC(DirectDrawCreateClipper, 0, &gdiClipper.getRef(), nullptr);
+		CALL_ORIG_PROC(DirectDrawCreateClipper)(0, &gdiClipper.getRef(), nullptr);
 		if (!gdiClipper)
 		{
 			return;
@@ -60,7 +62,7 @@ namespace
 
 		auto srcSurface(CompatPtr<IDirectDrawSurface7>::from(lpDDSrcSurface));
 		gdiSurface->SetClipper(gdiSurface, gdiClipper);
-		gdiSurface->Blt(gdiSurface, &dstRect, srcSurface, lpSrcRect, dwFlags, lpDDBltFx);
+		gdiSurface.get()->lpVtbl->Blt(gdiSurface, &dstRect, srcSurface, lpSrcRect, dwFlags, lpDDBltFx);
 		gdiSurface->SetClipper(gdiSurface, nullptr);
 	}
 
@@ -68,20 +70,14 @@ namespace
 	{
 		caps &= ~DDSCAPS_OFFSCREENPLAIN;
 		caps |= DDSCAPS_PRIMARYSURFACE | DDSCAPS_VISIBLE;
-
-		if ((caps & DDSCAPS_SYSTEMMEMORY) &&
-			!(DDraw::PrimarySurface::getOrigCaps() & DDSCAPS_SYSTEMMEMORY))
-		{
-			caps &= ~DDSCAPS_SYSTEMMEMORY;
-			caps |= DDSCAPS_VIDEOMEMORY | DDSCAPS_LOCALVIDMEM;
-		}
 	}
 }
 
 namespace DDraw
 {
 	template <typename TSurface>
-	PrimarySurfaceImpl<TSurface>::PrimarySurfaceImpl(SurfaceImpl& impl) : m_impl(impl)
+	PrimarySurfaceImpl<TSurface>::PrimarySurfaceImpl(Surface* data)
+		: SurfaceImpl(data)
 	{
 	}
 
@@ -95,7 +91,7 @@ namespace DDraw
 			return DDERR_SURFACELOST;
 		}
 
-		HRESULT result = m_impl.Blt(This, lpDestRect, lpDDSrcSurface, lpSrcRect, dwFlags, lpDDBltFx);
+		HRESULT result = SurfaceImpl::Blt(This, lpDestRect, lpDDSrcSurface, lpSrcRect, dwFlags, lpDDBltFx);
 		if (SUCCEEDED(result))
 		{
 			bltToGdi(This, lpDestRect, lpDDSrcSurface, lpSrcRect, dwFlags, lpDDBltFx);
@@ -113,7 +109,7 @@ namespace DDraw
 			return DDERR_SURFACELOST;
 		}
 
-		HRESULT result = m_impl.BltFast(This, dwX, dwY, lpDDSrcSurface, lpSrcRect, dwTrans);
+		HRESULT result = SurfaceImpl::BltFast(This, dwX, dwY, lpDDSrcSurface, lpSrcRect, dwTrans);
 		if (SUCCEEDED(result))
 		{
 			RealPrimarySurface::update();
@@ -124,20 +120,38 @@ namespace DDraw
 	template <typename TSurface>
 	HRESULT PrimarySurfaceImpl<TSurface>::Flip(TSurface* This, TSurface* lpDDSurfaceTargetOverride, DWORD dwFlags)
 	{
-		const bool wait = (dwFlags & DDFLIP_WAIT) || !(dwFlags & DDFLIP_DONOTWAIT) &&
-			CompatVtable<IDirectDrawSurface7Vtbl>::s_origVtablePtr == static_cast<void*>(This->lpVtbl);
-		if (!DDraw::RealPrimarySurface::waitForFlip(Surface::getSurface(*This), wait))
+		if (!waitForFlip(This, dwFlags, DDFLIP_WAIT, DDFLIP_DONOTWAIT))
 		{
 			return DDERR_WASSTILLDRAWING;
 		}
 
-		return RealPrimarySurface::flip(CompatPtr<IDirectDrawSurface7>::from(lpDDSurfaceTargetOverride), dwFlags);
+		auto surfaceTargetOverride(CompatPtr<TSurface>::from(lpDDSurfaceTargetOverride));
+		const bool isFlipEmulated = 0 != (PrimarySurface::getOrigCaps() & DDSCAPS_SYSTEMMEMORY);
+		if (isFlipEmulated)
+		{
+			if (!surfaceTargetOverride)
+			{
+				TDdsCaps caps = {};
+				caps.dwCaps = DDSCAPS_BACKBUFFER;
+				s_origVtable.GetAttachedSurface(This, &caps, &surfaceTargetOverride.getRef());
+			}
+			return Blt(This, nullptr, surfaceTargetOverride.get(), nullptr, DDBLT_WAIT, nullptr);
+		}
+
+		HRESULT result = SurfaceImpl::Flip(This, surfaceTargetOverride, DDFLIP_WAIT);
+		if (FAILED(result))
+		{
+			return result;
+		}
+
+		PrimarySurface::updateFrontResource();
+		return RealPrimarySurface::flip(surfaceTargetOverride, dwFlags);
 	}
 
 	template <typename TSurface>
 	HRESULT PrimarySurfaceImpl<TSurface>::GetCaps(TSurface* This, TDdsCaps* lpDDSCaps)
 	{
-		HRESULT result = m_impl.GetCaps(This, lpDDSCaps);
+		HRESULT result = SurfaceImpl::GetCaps(This, lpDDSCaps);
 		if (SUCCEEDED(result))
 		{
 			restorePrimaryCaps(lpDDSCaps->dwCaps);
@@ -148,7 +162,7 @@ namespace DDraw
 	template <typename TSurface>
 	HRESULT PrimarySurfaceImpl<TSurface>::GetSurfaceDesc(TSurface* This, TSurfaceDesc* lpDDSurfaceDesc)
 	{
-		HRESULT result = m_impl.GetSurfaceDesc(This, lpDDSurfaceDesc);
+		HRESULT result = SurfaceImpl::GetSurfaceDesc(This, lpDDSurfaceDesc);
 		if (SUCCEEDED(result))
 		{
 			restorePrimaryCaps(lpDDSurfaceDesc->ddsCaps.dwCaps);
@@ -159,7 +173,7 @@ namespace DDraw
 	template <typename TSurface>
 	HRESULT PrimarySurfaceImpl<TSurface>::IsLost(TSurface* This)
 	{
-		HRESULT result = m_impl.IsLost(This);
+		HRESULT result = SurfaceImpl::IsLost(This);
 		if (SUCCEEDED(result))
 		{
 			result = RealPrimarySurface::isLost() ? DDERR_SURFACELOST : DD_OK;
@@ -177,7 +191,7 @@ namespace DDraw
 			return DDERR_SURFACELOST;
 		}
 
-		HRESULT result = m_impl.Lock(This, lpDestRect, lpDDSurfaceDesc, dwFlags, hEvent);
+		HRESULT result = SurfaceImpl::Lock(This, lpDestRect, lpDDSurfaceDesc, dwFlags, hEvent);
 		if (SUCCEEDED(result))
 		{
 			restorePrimaryCaps(lpDDSurfaceDesc->ddsCaps.dwCaps);
@@ -188,7 +202,7 @@ namespace DDraw
 	template <typename TSurface>
 	HRESULT PrimarySurfaceImpl<TSurface>::ReleaseDC(TSurface* This, HDC hDC)
 	{
-		HRESULT result = m_impl.ReleaseDC(This, hDC);
+		HRESULT result = SurfaceImpl::ReleaseDC(This, hDC);
 		if (SUCCEEDED(result))
 		{
 			RealPrimarySurface::update();
@@ -205,11 +219,7 @@ namespace DDraw
 			result = RealPrimarySurface::restore();
 			if (SUCCEEDED(result))
 			{
-				result = m_impl.Restore(This);
-				if (SUCCEEDED(result))
-				{
-					PrimarySurface::onRestore();
-				}
+				return SurfaceImpl::Restore(This);
 			}
 		}
 		return result;
@@ -222,12 +232,8 @@ namespace DDraw
 		{
 			DirectDrawPalette::waitForNextUpdate();
 		}
-		if (lpDDPalette == PrimarySurface::s_palette)
-		{
-			return DD_OK;
-		}
 
-		HRESULT result = m_impl.SetPalette(This, lpDDPalette);
+		HRESULT result = SurfaceImpl::SetPalette(This, lpDDPalette);
 		if (SUCCEEDED(result))
 		{
 			PrimarySurface::s_palette = lpDDPalette;
@@ -239,7 +245,7 @@ namespace DDraw
 	template <typename TSurface>
 	HRESULT PrimarySurfaceImpl<TSurface>::Unlock(TSurface* This, TUnlockParam lpRect)
 	{
-		HRESULT result = m_impl.Unlock(This, lpRect);
+		HRESULT result = SurfaceImpl::Unlock(This, lpRect);
 		if (SUCCEEDED(result))
 		{
 			RealPrimarySurface::update();

@@ -1,6 +1,5 @@
 #include "Common/Hook.h"
 #include "Common/Log.h"
-#include "DDraw/ScopedThreadLock.h"
 #include "Gdi/Gdi.h"
 #include "Gdi/ScrollFunctions.h"
 #include "Gdi/Window.h"
@@ -52,7 +51,6 @@ namespace Gdi
 
 		void updateScrolledWindow(HWND hwnd)
 		{
-			DDraw::ScopedThreadLock lock;
 			auto window(Gdi::Window::get(hwnd));
 			UINT flags = RDW_ERASE | RDW_INVALIDATE | RDW_NOCHILDREN | RDW_UPDATENOW;
 			if (!window || window->getPresentationWindow() != hwnd)

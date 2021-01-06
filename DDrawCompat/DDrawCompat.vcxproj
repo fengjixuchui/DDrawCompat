@@ -9,67 +9,38 @@
       <Configuration>ReleaseWithDebugLogs</Configuration>
       <Platform>Win32</Platform>
     </ProjectConfiguration>
-    <ProjectConfiguration Include="ReleaseWithDebugLogs|x64">
-      <Configuration>ReleaseWithDebugLogs</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
     <ProjectConfiguration Include="Release|Win32">
       <Configuration>Release</Configuration>
       <Platform>Win32</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Debug|x64">
-      <Configuration>Debug</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|x64">
-      <Configuration>Release</Configuration>
-      <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{1146187A-17DE-4350-B9D1-9F9EAA934908}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>DDrawCompat</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.17763.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>NotSet</CharacterSet>
+    <SpectreMitigation>false</SpectreMitigation>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>NotSet</CharacterSet>
+    <SpectreMitigation>false</SpectreMitigation>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithDebugLogs|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>NotSet</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithDebugLogs|x64'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
+    <SpectreMitigation>false</SpectreMitigation>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -85,24 +56,12 @@
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithDebugLogs|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-  </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-  </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithDebugLogs|x64'" Label="PropertySheets">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-  </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <TargetName>ddraw</TargetName>
     <IncludePath>$(ProjectDir);C:\Program Files %28x86%29\Microsoft Research\Detours Express 3.0\include;$(IncludePath)</IncludePath>
     <LibraryPath>C:\Program Files %28x86%29\Microsoft Research\Detours Express 3.0\lib.X86;$(LibraryPath)</LibraryPath>
     <LinkIncremental>false</LinkIncremental>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LinkIncremental>true</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <TargetName>ddraw</TargetName>
@@ -114,44 +73,24 @@
     <IncludePath>$(ProjectDir);C:\Program Files %28x86%29\Microsoft Research\Detours Express 3.0\include;$(IncludePath)</IncludePath>
     <LibraryPath>C:\Program Files %28x86%29\Microsoft Research\Detours Express 3.0\lib.X86;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LinkIncremental>false</LinkIncremental>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithDebugLogs|x64'">
-    <LinkIncremental>false</LinkIncremental>
-  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <PrecompiledHeader>
       </PrecompiledHeader>
       <WarningLevel>Level4</WarningLevel>
-      <PreprocessorDefinitions>DEBUGLOGS;CINTERFACE;_NO_DDRAWINT_NO_COM;PSAPI_VERSION=1;WIN32;_DEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DEBUGLOGS;WIN32_LEAN_AND_MEAN;CINTERFACE;_NO_DDRAWINT_NO_COM;PSAPI_VERSION=1;WIN32;_DEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <MinimalRebuild>false</MinimalRebuild>
       <ObjectFileName>$(IntDir)%(RelativeDir)</ObjectFileName>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
-      <ModuleDefinitionFile>Dll/DDrawCompat.def</ModuleDefinitionFile>
       <AdditionalDependencies>dxguid.lib;detours.lib;msimg32.lib;oleacc.lib;psapi.lib;uxtheme.lib;dwmapi.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <OptimizeReferences>true</OptimizeReferences>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ClCompile>
-      <PrecompiledHeader>
-      </PrecompiledHeader>
-      <WarningLevel>Level3</WarningLevel>
-      <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>_DEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <ModuleDefinitionFile>DDrawCompat.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -159,13 +98,13 @@
       <PrecompiledHeader>
       </PrecompiledHeader>
       <WarningLevel>Level4</WarningLevel>
-      <PreprocessorDefinitions>CINTERFACE;_NO_DDRAWINT_NO_COM;PSAPI_VERSION=1;WIN32;NDEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;CINTERFACE;_NO_DDRAWINT_NO_COM;PSAPI_VERSION=1;WIN32;NDEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <ObjectFileName>$(IntDir)%(RelativeDir)</ObjectFileName>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
-      <ModuleDefinitionFile>Dll/DDrawCompat.def</ModuleDefinitionFile>
       <AdditionalDependencies>dxguid.lib;detours.lib;msimg32.lib;oleacc.lib;psapi.lib;uxtheme.lib;dwmapi.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <OptimizeReferences>true</OptimizeReferences>
@@ -177,53 +116,17 @@
       <PrecompiledHeader>
       </PrecompiledHeader>
       <WarningLevel>Level4</WarningLevel>
-      <PreprocessorDefinitions>DEBUGLOGS;CINTERFACE;_NO_DDRAWINT_NO_COM;PSAPI_VERSION=1;WIN32;NDEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>DEBUGLOGS;WIN32_LEAN_AND_MEAN;CINTERFACE;_NO_DDRAWINT_NO_COM;PSAPI_VERSION=1;WIN32;NDEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <ObjectFileName>$(IntDir)%(RelativeDir)</ObjectFileName>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
-      <ModuleDefinitionFile>Dll/DDrawCompat.def</ModuleDefinitionFile>
       <AdditionalDependencies>dxguid.lib;detours.lib;msimg32.lib;oleacc.lib;psapi.lib;uxtheme.lib;dwmapi.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <OptimizeReferences>true</OptimizeReferences>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader>
-      </PrecompiledHeader>
-      <Optimization>MaxSpeed</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-      <ModuleDefinitionFile>DDrawCompat.def</ModuleDefinitionFile>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithDebugLogs|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader>
-      </PrecompiledHeader>
-      <Optimization>MaxSpeed</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;DDRAWCOMPAT_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-      <ModuleDefinitionFile>DDrawCompat.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -231,38 +134,52 @@
     <ClInclude Include="Common\CompatQueryInterface.h" />
     <ClInclude Include="Common\CompatRef.h" />
     <ClInclude Include="Common\CompatVtable.h" />
+    <ClInclude Include="Common\CompatVtableInstance.h" />
     <ClInclude Include="Common\CompatWeakPtr.h" />
+    <ClInclude Include="Common\FuncNameVisitor.h" />
+    <ClInclude Include="Common\HResultException.h" />
     <ClInclude Include="Common\Log.h" />
+    <ClInclude Include="Common\LogWrapperVisitor.h" />
+    <ClInclude Include="Common\ScopedSrwLock.h" />
+    <ClInclude Include="Common\VtableHookVisitor.h" />
+    <ClInclude Include="Common\VtableUpdateVisitor.h" />
     <ClInclude Include="Common\VtableVisitor.h" />
     <ClInclude Include="Common\Hook.h" />
     <ClInclude Include="Common\ScopedCriticalSection.h" />
     <ClInclude Include="Common\Time.h" />
     <ClInclude Include="Config\Config.h" />
+    <ClInclude Include="D3dDdi\Adapter.h" />
     <ClInclude Include="D3dDdi\AdapterCallbacks.h" />
     <ClInclude Include="D3dDdi\AdapterFuncs.h" />
+    <ClInclude Include="D3dDdi\D3dDdiVtable.h" />
     <ClInclude Include="D3dDdi\Device.h" />
     <ClInclude Include="D3dDdi\DeviceCallbacks.h" />
     <ClInclude Include="D3dDdi\DeviceFuncs.h" />
+    <ClInclude Include="D3dDdi\DeviceState.h" />
+    <ClInclude Include="D3dDdi\DrawPrimitive.h" />
+    <ClInclude Include="D3dDdi\DynamicBuffer.h" />
+    <ClInclude Include="D3dDdi\FormatInfo.h" />
     <ClInclude Include="D3dDdi\Hooks.h" />
     <ClInclude Include="D3dDdi\KernelModeThunks.h" />
     <ClInclude Include="D3dDdi\Log\AdapterFuncsLog.h" />
+    <ClInclude Include="D3dDdi\Log\CommonLog.h" />
     <ClInclude Include="D3dDdi\Log\DeviceCallbacksLog.h" />
     <ClInclude Include="D3dDdi\Log\DeviceFuncsLog.h" />
     <ClInclude Include="D3dDdi\Log\KernelModeThunksLog.h" />
-    <ClInclude Include="D3dDdi\OversizedResource.h" />
-    <ClInclude Include="D3dDdi\RenderTargetResource.h" />
+    <ClInclude Include="D3dDdi\Resource.h" />
+    <ClInclude Include="D3dDdi\ScopedCriticalSection.h" />
     <ClInclude Include="D3dDdi\Visitors\AdapterCallbacksVisitor.h" />
     <ClInclude Include="D3dDdi\Visitors\AdapterFuncsVisitor.h" />
     <ClInclude Include="D3dDdi\Visitors\DeviceCallbacksVisitor.h" />
     <ClInclude Include="D3dDdi\Visitors\DeviceFuncsVisitor.h" />
-    <ClInclude Include="DDraw\ActivateAppHandler.h" />
+    <ClInclude Include="DDraw\Blitter.h" />
     <ClInclude Include="DDraw\DirectDraw.h" />
     <ClInclude Include="DDraw\DirectDrawClipper.h" />
     <ClInclude Include="DDraw\DirectDrawGammaControl.h" />
     <ClInclude Include="DDraw\DirectDrawPalette.h" />
     <ClInclude Include="DDraw\DirectDrawSurface.h" />
     <ClInclude Include="DDraw\Hooks.h" />
-    <ClInclude Include="DDraw\Repository.h" />
+    <ClInclude Include="DDraw\Log.h" />
     <ClInclude Include="DDraw\ScopedThreadLock.h" />
     <ClInclude Include="DDraw\Surfaces\PrimarySurface.h" />
     <ClInclude Include="DDraw\Surfaces\PrimarySurfaceImpl.h" />
@@ -279,18 +196,26 @@
     <ClInclude Include="Direct3d\DepthBuffer.h" />
     <ClInclude Include="Direct3d\Direct3d.h" />
     <ClInclude Include="Direct3d\Direct3dDevice.h" />
+    <ClInclude Include="Direct3d\Direct3dExecuteBuffer.h" />
+    <ClInclude Include="Direct3d\Direct3dLight.h" />
+    <ClInclude Include="Direct3d\Direct3dMaterial.h" />
     <ClInclude Include="Direct3d\Direct3dTexture.h" />
     <ClInclude Include="Direct3d\Direct3dVertexBuffer.h" />
     <ClInclude Include="Direct3d\Direct3dViewport.h" />
     <ClInclude Include="Direct3d\Hooks.h" />
+    <ClInclude Include="Direct3d\Log.h" />
     <ClInclude Include="Direct3d\Types.h" />
     <ClInclude Include="Direct3d\Visitors\Direct3dDeviceVtblVisitor.h" />
+    <ClInclude Include="Direct3d\Visitors\Direct3dExecuteBufferVtblVisitor.h" />
+    <ClInclude Include="Direct3d\Visitors\Direct3dLightVtblVisitor.h" />
+    <ClInclude Include="Direct3d\Visitors\Direct3dMaterialVtblVisitor.h" />
     <ClInclude Include="Direct3d\Visitors\Direct3dTextureVtblVisitor.h" />
     <ClInclude Include="Direct3d\Visitors\Direct3dVertexBufferVtblVisitor.h" />
     <ClInclude Include="Direct3d\Visitors\Direct3dViewportVtblVisitor.h" />
     <ClInclude Include="Direct3d\Visitors\Direct3dVtblVisitor.h" />
-    <ClInclude Include="Dll\Procs.h" />
+    <ClInclude Include="Dll\Dll.h" />
     <ClInclude Include="Gdi\AccessGuard.h" />
+    <ClInclude Include="Gdi\Font.h" />
     <ClInclude Include="Gdi\Gdi.h" />
     <ClInclude Include="Gdi\Caret.h" />
     <ClInclude Include="Gdi\Dc.h" />
@@ -306,36 +231,44 @@
     <ClInclude Include="Gdi\Window.h" />
     <ClInclude Include="Gdi\WinProc.h" />
     <ClInclude Include="Win32\DisplayMode.h" />
-    <ClInclude Include="Win32\FontSmoothing.h" />
+    <ClInclude Include="Win32\Log.h" />
+    <ClInclude Include="Win32\MemoryManagement.h" />
     <ClInclude Include="Win32\MsgHooks.h" />
     <ClInclude Include="Win32\Registry.h" />
+    <ClInclude Include="Win32\WaitFunctions.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Common\Log.cpp" />
     <ClCompile Include="Common\Hook.cpp" />
     <ClCompile Include="Common\Time.cpp" />
+    <ClCompile Include="D3dDdi\Adapter.cpp" />
     <ClCompile Include="D3dDdi\AdapterCallbacks.cpp" />
     <ClCompile Include="D3dDdi\AdapterFuncs.cpp" />
     <ClCompile Include="D3dDdi\Device.cpp" />
     <ClCompile Include="D3dDdi\DeviceCallbacks.cpp" />
     <ClCompile Include="D3dDdi\DeviceFuncs.cpp" />
+    <ClCompile Include="D3dDdi\DeviceState.cpp" />
+    <ClCompile Include="D3dDdi\DrawPrimitive.cpp" />
+    <ClCompile Include="D3dDdi\DynamicBuffer.cpp" />
+    <ClCompile Include="D3dDdi\FormatInfo.cpp" />
     <ClCompile Include="D3dDdi\Hooks.cpp" />
     <ClCompile Include="D3dDdi\KernelModeThunks.cpp" />
     <ClCompile Include="D3dDdi\Log\AdapterFuncsLog.cpp" />
+    <ClCompile Include="D3dDdi\Log\CommonLog.cpp" />
     <ClCompile Include="D3dDdi\Log\DeviceCallbacksLog.cpp" />
     <ClCompile Include="D3dDdi\Log\DeviceFuncsLog.cpp" />
     <ClCompile Include="D3dDdi\Log\KernelModeThunksLog.cpp" />
-    <ClCompile Include="D3dDdi\OversizedResource.cpp" />
-    <ClCompile Include="D3dDdi\RenderTargetResource.cpp" />
-    <ClCompile Include="DDraw\ActivateAppHandler.cpp" />
+    <ClCompile Include="D3dDdi\Resource.cpp" />
+    <ClCompile Include="D3dDdi\ScopedCriticalSection.cpp" />
+    <ClCompile Include="DDraw\Blitter.cpp" />
     <ClCompile Include="DDraw\DirectDraw.cpp" />
     <ClCompile Include="DDraw\DirectDrawClipper.cpp" />
     <ClCompile Include="DDraw\DirectDrawGammaControl.cpp" />
     <ClCompile Include="DDraw\DirectDrawPalette.cpp" />
     <ClCompile Include="DDraw\DirectDrawSurface.cpp" />
     <ClCompile Include="DDraw\Hooks.cpp" />
-    <ClCompile Include="DDraw\Repository.cpp" />
     <ClCompile Include="DDraw\IReleaseNotifier.cpp" />
+    <ClCompile Include="DDraw\Log.cpp" />
     <ClCompile Include="DDraw\RealPrimarySurface.cpp" />
     <ClCompile Include="DDraw\Surfaces\PrimarySurface.cpp" />
     <ClCompile Include="DDraw\Surfaces\PrimarySurfaceImpl.cpp" />
@@ -344,14 +277,18 @@
     <ClCompile Include="Direct3d\DepthBuffer.cpp" />
     <ClCompile Include="Direct3d\Direct3d.cpp" />
     <ClCompile Include="Direct3d\Direct3dDevice.cpp" />
+    <ClCompile Include="Direct3d\Direct3dExecuteBuffer.cpp" />
+    <ClCompile Include="Direct3d\Direct3dLight.cpp" />
+    <ClCompile Include="Direct3d\Direct3dMaterial.cpp" />
     <ClCompile Include="Direct3d\Direct3dTexture.cpp" />
     <ClCompile Include="Direct3d\Direct3dVertexBuffer.cpp" />
     <ClCompile Include="Direct3d\Direct3dViewport.cpp" />
     <ClCompile Include="Direct3d\Hooks.cpp" />
-    <ClCompile Include="Dll\Procs.cpp" />
+    <ClCompile Include="Direct3d\Log.cpp" />
     <ClCompile Include="Dll\DllMain.cpp" />
-    <ClCompile Include="Dll\UnmodifiedProcs.cpp" />
+    <ClCompile Include="Dll\Dll.cpp" />
     <ClCompile Include="Gdi\AccessGuard.cpp" />
+    <ClCompile Include="Gdi\Font.cpp" />
     <ClCompile Include="Gdi\Gdi.cpp" />
     <ClCompile Include="Gdi\Caret.cpp" />
     <ClCompile Include="Gdi\Dc.cpp" />
@@ -367,12 +304,11 @@
     <ClCompile Include="Gdi\Window.cpp" />
     <ClCompile Include="Gdi\WinProc.cpp" />
     <ClCompile Include="Win32\DisplayMode.cpp" />
-    <ClCompile Include="Win32\FontSmoothing.cpp" />
+    <ClCompile Include="Win32\Log.cpp" />
+    <ClCompile Include="Win32\MemoryManagement.cpp" />
     <ClCompile Include="Win32\MsgHooks.cpp" />
     <ClCompile Include="Win32\Registry.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="Dll\DDrawCompat.def" />
+    <ClCompile Include="Win32\WaitFunctions.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

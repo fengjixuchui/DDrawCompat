@@ -1,7 +1,5 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <Windows.h>
 
 namespace Gdi
@@ -11,7 +9,6 @@ namespace Gdi
 	typedef void(*WindowPosChangeNotifyFunc)();
 
 	void dllThreadDetach();
-	HDC getScreenDc();
 	HRGN getVisibleWindowRgn(HWND hwnd);
 	void installHooks();
 	bool isDisplayDc(HDC dc);

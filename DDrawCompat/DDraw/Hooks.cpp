@@ -1,9 +1,5 @@
-#include <d3d.h>
-
-#include "Common/CompatPtr.h"
 #include "Common/CompatRef.h"
 #include "Common/Log.h"
-#include "DDraw/ActivateAppHandler.h"
 #include "DDraw/DirectDraw.h"
 #include "DDraw/DirectDrawClipper.h"
 #include "DDraw/DirectDrawGammaControl.h"
@@ -11,8 +7,6 @@
 #include "DDraw/DirectDrawSurface.h"
 #include "DDraw/Hooks.h"
 #include "DDraw/RealPrimarySurface.h"
-#include "DDraw/Repository.h"
-#include "Dll/Procs.h"
 #include "Win32/Registry.h"
 
 namespace
@@ -20,15 +14,12 @@ namespace
 	template <typename Interface>
 	void hookVtable(const CompatPtr<Interface>& intf);
 
-	void hookDirectDraw(CompatRef<IDirectDraw7> dd)
+	void hookDirectDraw(CompatPtr<IDirectDraw7> dd)
 	{
-		DDraw::DirectDraw<IDirectDraw7>::s_origVtable = *(&dd)->lpVtbl;
-		CompatPtr<IDirectDraw7> dd7(&dd);
-		hookVtable<IDirectDraw>(dd7);
-		hookVtable<IDirectDraw2>(dd7);
-		hookVtable<IDirectDraw4>(dd7);
-		hookVtable<IDirectDraw7>(dd7);
-		dd7.detach();
+		hookVtable<IDirectDraw>(dd);
+		hookVtable<IDirectDraw2>(dd);
+		hookVtable<IDirectDraw4>(dd);
+		hookVtable<IDirectDraw7>(dd);
 	}
 
 	void hookDirectDrawClipper(CompatRef<IDirectDraw7> dd)
@@ -41,7 +32,7 @@ namespace
 		}
 		else
 		{
-			Compat::Log() << "Failed to create a DirectDraw clipper for hooking: " << result;
+			Compat::Log() << "ERROR: Failed to create a DirectDraw clipper for hooking: " << result;
 		}
 	}
 
@@ -57,7 +48,7 @@ namespace
 		}
 		else
 		{
-			Compat::Log() << "Failed to create a DirectDraw palette for hooking: " << result;
+			Compat::Log() << "ERROR: Failed to create a DirectDraw palette for hooking: " << result;
 		}
 	}
 
@@ -84,7 +75,7 @@ namespace
 		}
 		else
 		{
-			Compat::Log() << "Failed to create a DirectDraw surface for hooking: " << result;
+			Compat::Log() << "ERROR: Failed to create a DirectDraw surface for hooking: " << result;
 		}
 	}
 
@@ -100,39 +91,16 @@ namespace
 
 namespace DDraw
 {
-	void installHooks()
+	void installHooks(CompatPtr<IDirectDraw7> dd7)
 	{
 		RealPrimarySurface::init();
-		ActivateAppHandler::installHooks();
 
 		Win32::Registry::unsetValue(
 			HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\DirectDraw", "EmulationOnly");
 		Win32::Registry::unsetValue(
 			HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Microsoft\\DirectDraw", "EmulationOnly");
 
-		CompatPtr<IDirectDraw> dd;
-		CALL_ORIG_PROC(DirectDrawCreate, nullptr, &dd.getRef(), nullptr);
-		if (!dd)
-		{
-			Compat::Log() << "Failed to create a DirectDraw object for hooking";
-			return;
-		}
-
-		HRESULT result = dd->SetCooperativeLevel(dd, nullptr, DDSCL_NORMAL);
-		if (FAILED(result))
-		{
-			Compat::Log() << "Failed to set the cooperative level for hooking: " << result;
-			return;
-		}
-
-		auto dd7(Repository::getDirectDraw());
-		if (!dd7)
-		{
-			Compat::Log() << "Failed to create a DirectDraw7 object for hooking";
-			return;
-		}
-
-		hookDirectDraw(*dd7);
+		hookDirectDraw(dd7);
 		hookDirectDrawClipper(*dd7);
 		hookDirectDrawPalette(*dd7);
 		hookDirectDrawSurface(*dd7);

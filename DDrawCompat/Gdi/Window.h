@@ -1,7 +1,5 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <map>
 #include <memory>
 
@@ -17,6 +15,7 @@ namespace Gdi
 		Window(HWND hwnd);
 		Window(const Window&) = delete;
 		Window& operator=(const Window&) = delete;
+		~Window();
 
 		BYTE getAlpha() const;
 		COLORREF getColorKey() const;
@@ -24,6 +23,7 @@ namespace Gdi
 		Region getVisibleRegion() const;
 		RECT getWindowRect() const;
 		bool isLayered() const;
+		void setPresentationWindow(HWND hwnd);
 		void updateWindow();
 
 		static bool add(HWND hwnd);
@@ -51,7 +51,6 @@ namespace Gdi
 		COLORREF m_colorKey;
 		BYTE m_alpha;
 		bool m_isLayered;
-		bool m_isUpdating;
 
 		static std::map<HWND, std::shared_ptr<Window>> s_windows;
 	};

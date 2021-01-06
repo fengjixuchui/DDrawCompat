@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include <ddraw.h>
 
@@ -19,10 +20,12 @@ namespace DDraw
 		virtual ULONG STDMETHODCALLTYPE AddRef();
 		virtual ULONG STDMETHODCALLTYPE Release();
 
+		Surface();
 		virtual ~Surface();
 
 		template <typename TDirectDraw, typename TSurface, typename TSurfaceDesc>
-		static HRESULT create(CompatRef<TDirectDraw> dd, TSurfaceDesc desc, TSurface*& surface);
+		static HRESULT create(
+			CompatRef<TDirectDraw> dd, TSurfaceDesc desc, TSurface*& surface, std::unique_ptr<Surface> privateData);
 
 		template <typename TSurface>
 		static Surface* getSurface(TSurface& dds);
@@ -30,10 +33,12 @@ namespace DDraw
 		template <typename TSurface>
 		SurfaceImpl<TSurface>* getImpl() const;
 
-	protected:
-		Surface();
+		virtual void restore();
 
-		static void attach(CompatRef<IDirectDrawSurface7> dds, std::unique_ptr<Surface>& privateData);
+	protected:
+		static void attach(CompatRef<IDirectDrawSurface7> dds, std::unique_ptr<Surface> privateData);
+
+		virtual void createImpl();
 
 		void* m_ddObject;
 		std::unique_ptr<SurfaceImpl<IDirectDrawSurface>> m_impl;
@@ -42,15 +47,12 @@ namespace DDraw
 		std::unique_ptr<SurfaceImpl<IDirectDrawSurface4>> m_impl4;
 		std::unique_ptr<SurfaceImpl<IDirectDrawSurface7>> m_impl7;
 
+		CompatWeakPtr<IDirectDrawSurface7> m_surface;
+
 	private:
 		template <typename TDirectDrawSurface>
-		friend class SurfaceImpl2;
+		friend class SurfaceImpl;
 
-		static HRESULT WINAPI attachToLinkedSurfaces(
-			IDirectDrawSurface7* surface, DDSURFACEDESC2* desc, void* rootSurface);
-		virtual void createImpl();
-
-		IID m_ddId;
 		DWORD m_refCount;
 	};
 }

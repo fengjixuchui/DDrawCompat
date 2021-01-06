@@ -1,20 +1,18 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <Windows.h>
 
 namespace D3dDdi
 {
 	namespace KernelModeThunks
 	{
-		UINT getLastFlipInterval();
-		UINT getLastDisplayedFrameCount();
-		UINT getLastSubmittedFrameCount();
 		RECT getMonitorRect();
-		long long getQpcLastVerticalBlank();
+		UINT getVsyncCounter();
 		void installHooks(HMODULE origDDrawModule);
-		void setFlipIntervalOverride(UINT flipInterval);
-		void waitForVerticalBlank();
+		void setDcFormatOverride(UINT format);
+		void setDcPaletteOverride(bool enable);
+		void stopVsyncThread();
+		void waitForVsync();
+		bool waitForVsyncCounter(UINT counter);
 	}
 }

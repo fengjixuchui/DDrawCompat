@@ -1,7 +1,5 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <Windows.h>
 
 namespace Gdi
@@ -11,6 +9,7 @@ namespace Gdi
 	public:
 		Region(HRGN rgn);
 		Region(const RECT& rect = RECT{ 0, 0, 0, 0 });
+		Region(HWND hwnd);
 		~Region();
 		Region(const Region& other);
 		Region(Region&& other);
@@ -18,6 +17,7 @@ namespace Gdi
 
 		bool isEmpty() const;
 		void offset(int x, int y);
+		HRGN release();
 
 		operator HRGN() const;
 

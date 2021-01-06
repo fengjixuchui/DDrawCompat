@@ -1,13 +1,10 @@
-#define WIN32_LEAN_AND_MEAN
-
 #include <Windows.h>
 
-#include "Common/Hook.h"
-#include "Common/Time.h"
-#include "DDraw/ScopedThreadLock.h"
-#include "Gdi/Caret.h"
-
-extern "C" IMAGE_DOS_HEADER __ImageBase;
+#include <Common/Hook.h>
+#include <Common/Time.h>
+#include <D3dDdi/ScopedCriticalSection.h>
+#include <Dll/Dll.h>
+#include <Gdi/Caret.h>
 
 namespace
 {
@@ -34,7 +31,6 @@ namespace
 	{
 		if (OBJID_CARET == idObject)
 		{
-			DDraw::ScopedThreadLock lock;
 			updateCaret(GetWindowThreadProcessId(hwnd, nullptr));
 		}
 	}
@@ -64,7 +60,7 @@ namespace
 
 	void updateCaret(DWORD threadId)
 	{
-		DDraw::ScopedThreadLock lock;
+		D3dDdi::ScopedCriticalSection lock;
 		if (g_caret.isDrawn)
 		{
 			drawCaret();
@@ -87,7 +83,7 @@ namespace Gdi
 	{
 		void blink()
 		{
-			DDraw::ScopedThreadLock lock;
+			D3dDdi::ScopedCriticalSection lock;
 			if (!g_caret.isVisible)
 			{
 				return;
@@ -117,14 +113,10 @@ namespace Gdi
 
 		void installHooks()
 		{
-			g_caretGeneralEventHook = SetWinEventHook(
-				EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE,
-				reinterpret_cast<HMODULE>(&__ImageBase), &caretEvent,
-				GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
-			g_caretLocationChangeEventHook = SetWinEventHook(
-				EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE,
-				reinterpret_cast<HMODULE>(&__ImageBase), &caretEvent,
-				GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
+			g_caretGeneralEventHook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE,
+				Dll::g_currentModule, &caretEvent, GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
+			g_caretLocationChangeEventHook = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE,
+				Dll::g_currentModule, &caretEvent, GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
 		}
 
 		void uninstallHooks()

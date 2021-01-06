@@ -1,72 +1,92 @@
 #pragma once
 
 #include <map>
-#include <set>
+#include <unordered_map>
 
 #include <d3d.h>
 #include <d3dnthal.h>
 #include <d3dumddi.h>
 
-#include "D3dDdi/OversizedResource.h"
-#include "D3dDdi/RenderTargetResource.h"
+#include <D3dDdi/DeviceState.h>
+#include <D3dDdi/DrawPrimitive.h>
 
 namespace D3dDdi
 {
-	UINT getBytesPerPixel(D3DDDIFORMAT format);
+	class Adapter;
+	class Resource;
 
 	class Device
 	{
 	public:
 		Device(HANDLE adapter, HANDLE device);
 
-		HRESULT blt(const D3DDDIARG_BLT& data);
-		HRESULT clear(const D3DDDIARG_CLEAR& data, UINT numRect, const RECT* rect);
-		HRESULT colorFill(const D3DDDIARG_COLORFILL& data);
-		HRESULT createResource(D3DDDIARG_CREATERESOURCE& data);
-		HRESULT createResource2(D3DDDIARG_CREATERESOURCE2& data);
-		HRESULT destroyResource(HANDLE resource);
-		HRESULT drawIndexedPrimitive(const D3DDDIARG_DRAWINDEXEDPRIMITIVE& data);
-		HRESULT drawIndexedPrimitive2(const D3DDDIARG_DRAWINDEXEDPRIMITIVE2& data,
-			UINT indicesSize, const void* indexBuffer, const UINT* flagBuffer);
-		HRESULT drawPrimitive(const D3DDDIARG_DRAWPRIMITIVE& data, const UINT* flagBuffer);
-		HRESULT drawPrimitive2(const D3DDDIARG_DRAWPRIMITIVE2& data);
-		HRESULT drawRectPatch(const D3DDDIARG_DRAWRECTPATCH& data, const D3DDDIRECTPATCH_INFO* info,
-			const FLOAT* patch);
-		HRESULT drawTriPatch(const D3DDDIARG_DRAWTRIPATCH& data, const D3DDDITRIPATCH_INFO* info,
-			const FLOAT* patch);
-		HRESULT lock(D3DDDIARG_LOCK& data);
-		HRESULT openResource(D3DDDIARG_OPENRESOURCE& data);
-		HRESULT present(const D3DDDIARG_PRESENT& data);
-		HRESULT present1(D3DDDIARG_PRESENT1& data);
-		HRESULT texBlt(const D3DDDIARG_TEXBLT& data);
-		HRESULT texBlt1(const D3DDDIARG_TEXBLT1& data);
-		HRESULT unlock(const D3DDDIARG_UNLOCK& data);
-		HRESULT updateWInfo(const D3DDDIARG_WINFO& data);
+		Device(const Device&) = delete;
+		Device(Device&&) = delete;
+		Device& operator=(const Device&) = delete;
+		Device& operator=(Device&&) = delete;
 
-		void prepareForRendering(HANDLE resource, UINT subResourceIndex = UINT_MAX);
+		operator HANDLE() const { return m_device; }
+
+		HRESULT blt(const D3DDDIARG_BLT* data);
+		HRESULT clear(const D3DDDIARG_CLEAR* data, UINT numRect, const RECT* rect);
+		HRESULT colorFill(const D3DDDIARG_COLORFILL* data);
+		HRESULT createResource(D3DDDIARG_CREATERESOURCE* data);
+		HRESULT createResource2(D3DDDIARG_CREATERESOURCE2* data);
+		HRESULT destroyResource(HANDLE resource);
+		HRESULT drawIndexedPrimitive2(const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* data,
+			UINT indicesSize, const void* indexBuffer, const UINT* flagBuffer);
+		HRESULT drawPrimitive(const D3DDDIARG_DRAWPRIMITIVE* data, const UINT* flagBuffer);
+		HRESULT flush();
+		HRESULT flush1(UINT FlushFlags);
+		HRESULT lock(D3DDDIARG_LOCK* data);
+		HRESULT openResource(D3DDDIARG_OPENRESOURCE* data);
+		HRESULT present(const D3DDDIARG_PRESENT* data);
+		HRESULT present1(D3DDDIARG_PRESENT1* data);
+		HRESULT setRenderTarget(const D3DDDIARG_SETRENDERTARGET* data);
+		HRESULT setStreamSource(const D3DDDIARG_SETSTREAMSOURCE* data);
+		HRESULT setStreamSourceUm(const D3DDDIARG_SETSTREAMSOURCEUM* data, const void* umBuffer);
+		HRESULT unlock(const D3DDDIARG_UNLOCK* data);
+
+		Adapter& getAdapter() const { return m_adapter; }
+		const D3DDDI_DEVICEFUNCS& getOrigVtable() const { return m_origVtable; }
+		Resource* getResource(HANDLE resource);
+		DeviceState& getState() { return m_state; }
+
+		HRESULT createPrivateResource(D3DDDIARG_CREATERESOURCE2& data);
+		void flushPrimitives() { m_drawPrimitive.flushPrimitives(); }
+		void prepareForRendering(HANDLE resource, UINT subResourceIndex, bool isReadOnly);
 		void prepareForRendering();
 
+		bool isSrcColorKeySupported() const { return m_isSrcColorKeySupported; }
+
+		static void add(HANDLE adapter, HANDLE device);
+		static Device& get(HANDLE device);
+		static void remove(HANDLE device);
+
+		static void enableFlush(bool enable) { s_isFlushEnabled = enable; }
+		static Resource* findResource(HANDLE resource);
+		static Resource* getGdiResource();
 		static void setGdiResourceHandle(HANDLE resource);
 		static void setReadOnlyGdiLock(bool enable);
 
 	private:
-		template <typename CreateResourceArg, typename CreateResourceFunc>
-		HRESULT createOversizedResource(
-			CreateResourceArg& data,
-			CreateResourceFunc origCreateResource,
-			const D3DNTHAL_D3DEXTENDEDCAPS& caps);
+		bool checkSrcColorKeySupport();
 
-		template <typename CreateResourceArg, typename CreateResourceFunc>
-		HRESULT createResourceImpl(CreateResourceArg& data, CreateResourceFunc origCreateResource);
+		template <typename Arg>
+		HRESULT createResourceImpl(Arg& data);
 
-		void prepareForRendering(RenderTargetResource& resource, UINT subResourceIndex = UINT_MAX);
-
-		const D3DDDI_DEVICEFUNCS* m_origVtable;
-		HANDLE m_adapter;
+		const D3DDDI_DEVICEFUNCS& m_origVtable;
+		Adapter& m_adapter;
 		HANDLE m_device;
-		std::map<HANDLE, OversizedResource> m_oversizedResources;
-		std::map<HANDLE, RenderTargetResource> m_renderTargetResources;
-		std::map<HANDLE, RenderTargetResource&> m_lockedRenderTargetResources;
+		std::unordered_map<HANDLE, Resource> m_resources;
+		Resource* m_renderTarget;
+		UINT m_renderTargetSubResourceIndex;
 		HANDLE m_sharedPrimary;
+		DrawPrimitive m_drawPrimitive;
+		DeviceState m_state;
+		bool m_isSrcColorKeySupported;
+
+		static std::map<HANDLE, Device> s_devices;
+		static bool s_isFlushEnabled;
 	};
 }

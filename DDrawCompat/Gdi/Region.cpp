@@ -1,6 +1,7 @@
 #include <utility>
 
-#include "Gdi/Region.h"
+#include <Common/Hook.h>
+#include <Gdi/Region.h>
 
 namespace
 {
@@ -22,6 +23,14 @@ namespace Gdi
 	Region::Region(const RECT& rect)
 		: m_region(CreateRectRgnIndirect(&rect))
 	{
+	}
+
+	Region::Region(HWND hwnd)
+		: m_region(CreateRectRgn(0, 0, 0, 0))
+	{
+		HDC dc = GetWindowDC(hwnd);
+		GetRandomRgn(dc, m_region, SYSRGN);
+		CALL_ORIG_FUNC(ReleaseDC)(hwnd, dc);
 	}
 
 	Region::~Region()
@@ -58,6 +67,13 @@ namespace Gdi
 	void Region::offset(int x, int y)
 	{
 		OffsetRgn(m_region, x, y);
+	}
+
+	HRGN Region::release()
+	{
+		HRGN rgn = m_region;
+		m_region = nullptr;
+		return rgn;
 	}
 
 	Region::operator HRGN() const

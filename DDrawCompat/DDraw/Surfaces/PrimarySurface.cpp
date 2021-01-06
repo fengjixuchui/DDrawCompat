@@ -4,41 +4,32 @@
 #include "D3dDdi/Device.h"
 #include "D3dDdi/KernelModeThunks.h"
 #include "DDraw/DirectDraw.h"
+#include "DDraw/DirectDrawSurface.h"
 #include "DDraw/RealPrimarySurface.h"
 #include "DDraw/Surfaces/PrimarySurface.h"
 #include "DDraw/Surfaces/PrimarySurfaceImpl.h"
+#include "Gdi/Palette.h"
+#include "Gdi/VirtualScreen.h"
 
 namespace
 {
-	DDSURFACEDESC2 g_primarySurfaceDesc = {};
 	CompatWeakPtr<IDirectDrawSurface7> g_primarySurface;
 	HANDLE g_gdiResourceHandle = nullptr;
+	HANDLE g_frontResource = nullptr;
 	DWORD g_origCaps = 0;
-
-	template <typename TSurface>
-	HANDLE getResourceHandle(TSurface& surface)
-	{
-		return reinterpret_cast<HANDLE**>(&surface)[1][2];
-	}
 }
 
 namespace DDraw
 {
-	PrimarySurface::PrimarySurface(Surface* surface) : m_surface(surface)
-	{
-		surface->AddRef();
-	}
-
 	PrimarySurface::~PrimarySurface()
 	{
 		LOG_FUNC("PrimarySurface::~PrimarySurface");
 
 		g_gdiResourceHandle = nullptr;
+		g_frontResource = nullptr;
 		g_primarySurface = nullptr;
 		g_origCaps = 0;
 		s_palette = nullptr;
-		ZeroMemory(&s_paletteEntries, sizeof(s_paletteEntries));
-		ZeroMemory(&g_primarySurfaceDesc, sizeof(g_primarySurfaceDesc));
 
 		DDraw::RealPrimarySurface::release();
 	}
@@ -58,27 +49,28 @@ namespace DDraw
 		desc.dwFlags |= DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT;
 		desc.dwWidth = dm.dwWidth;
 		desc.dwHeight = dm.dwHeight;
-		desc.ddsCaps.dwCaps &= ~DDSCAPS_PRIMARYSURFACE;
+		desc.ddsCaps.dwCaps &= ~(DDSCAPS_PRIMARYSURFACE | DDSCAPS_SYSTEMMEMORY |
+			DDSCAPS_VIDEOMEMORY | DDSCAPS_LOCALVIDMEM | DDSCAPS_NONLOCALVIDMEM);
 		desc.ddsCaps.dwCaps |= DDSCAPS_OFFSCREENPLAIN;
 		desc.ddpfPixelFormat = dm.ddpfPixelFormat;
+		if (desc.ddpfPixelFormat.dwRGBBitCount <= 8 && (desc.ddsCaps.dwCaps & DDSCAPS_3DDEVICE))
+		{
+			desc.ddsCaps.dwCaps &= ~DDSCAPS_3DDEVICE;
+			desc.ddsCaps.dwCaps |= DDSCAPS_SYSTEMMEMORY;
+		}
 
-		result = Surface::create(dd, desc, surface);
+		auto privateData(std::make_unique<PrimarySurface>());
+		auto data = privateData.get();
+		result = Surface::create(dd, desc, surface, std::move(privateData));
 		if (FAILED(result))
 		{
-			Compat::Log() << "Failed to create the compat primary surface!";
+			Compat::Log() << "ERROR: Failed to create the compat primary surface: " << Compat::hex(result);
 			RealPrimarySurface::release();
 			return result;
 		}
 
-		CompatPtr<IDirectDrawSurface7> surface7(Compat::queryInterface<IDirectDrawSurface7>(surface));
-		std::unique_ptr<Surface> privateData(new PrimarySurface(Surface::getSurface(*surface)));
-		attach(*surface7, privateData);
-
-		g_primarySurface = surface7;
 		g_origCaps = origCaps;
-
-		onRestore();
-
+		data->restore();
 		return DD_OK;
 	}
 
@@ -93,11 +85,11 @@ namespace DDraw
 
 	void PrimarySurface::createImpl()
 	{
-		m_impl.reset(new PrimarySurfaceImpl<IDirectDrawSurface>(*m_surface->getImpl<IDirectDrawSurface>()));
-		m_impl2.reset(new PrimarySurfaceImpl<IDirectDrawSurface2>(*m_surface->getImpl<IDirectDrawSurface2>()));
-		m_impl3.reset(new PrimarySurfaceImpl<IDirectDrawSurface3>(*m_surface->getImpl<IDirectDrawSurface3>()));
-		m_impl4.reset(new PrimarySurfaceImpl<IDirectDrawSurface4>(*m_surface->getImpl<IDirectDrawSurface4>()));
-		m_impl7.reset(new PrimarySurfaceImpl<IDirectDrawSurface7>(*m_surface->getImpl<IDirectDrawSurface7>()));
+		m_impl.reset(new PrimarySurfaceImpl<IDirectDrawSurface>(this));
+		m_impl2.reset(new PrimarySurfaceImpl<IDirectDrawSurface2>(this));
+		m_impl3.reset(new PrimarySurfaceImpl<IDirectDrawSurface3>(this));
+		m_impl4.reset(new PrimarySurfaceImpl<IDirectDrawSurface4>(this));
+		m_impl7.reset(new PrimarySurfaceImpl<IDirectDrawSurface7>(this));
 	}
 
 	HRESULT PrimarySurface::flipToGdiSurface()
@@ -108,11 +100,6 @@ namespace DDraw
 			return DDERR_NOTFOUND;
 		}
 		return g_primarySurface.get()->lpVtbl->Flip(g_primarySurface, gdiSurface, DDFLIP_WAIT);
-	}
-
-	const DDSURFACEDESC2& PrimarySurface::getDesc()
-	{
-		return g_primarySurfaceDesc;
 	}
 
 	CompatPtr<IDirectDrawSurface7> PrimarySurface::getGdiSurface()
@@ -173,6 +160,11 @@ namespace DDraw
 		return g_primarySurface;
 	}
 
+	HANDLE PrimarySurface::getFrontResource()
+	{
+		return g_frontResource;
+	}
+
 	DWORD PrimarySurface::getOrigCaps()
 	{
 		return g_origCaps;
@@ -181,7 +173,7 @@ namespace DDraw
 	template <typename TSurface>
 	static bool PrimarySurface::isGdiSurface(TSurface* surface)
 	{
-		return surface && getResourceHandle(*surface) == g_gdiResourceHandle;
+		return surface && getRuntimeResourceHandle(*surface) == g_gdiResourceHandle;
 	}
 
 	template bool PrimarySurface::isGdiSurface(IDirectDrawSurface*);
@@ -190,25 +182,61 @@ namespace DDraw
 	template bool PrimarySurface::isGdiSurface(IDirectDrawSurface4*);
 	template bool PrimarySurface::isGdiSurface(IDirectDrawSurface7*);
 
-	void PrimarySurface::onRestore()
+	void PrimarySurface::restore()
 	{
-		g_primarySurfaceDesc = {};
-		g_primarySurfaceDesc.dwSize = sizeof(g_primarySurfaceDesc);
-		g_primarySurface->GetSurfaceDesc(g_primarySurface, &g_primarySurfaceDesc);
+		LOG_FUNC("PrimarySurface::restore");
 
-		g_gdiResourceHandle = getResourceHandle(*g_primarySurface);
-		D3dDdi::Device::setGdiResourceHandle(*reinterpret_cast<HANDLE*>(g_gdiResourceHandle));
+		Gdi::VirtualScreen::update();
+		g_primarySurface = m_surface;
+		g_gdiResourceHandle = getRuntimeResourceHandle(*g_primarySurface);
+
+		DDSURFACEDESC2 desc = {};
+		desc.dwSize = sizeof(desc);
+		m_surface->GetSurfaceDesc(m_surface, &desc);
+		if (desc.ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)
+		{
+			DDSURFACEDESC2 gdiDesc = Gdi::VirtualScreen::getSurfaceDesc(D3dDdi::KernelModeThunks::getMonitorRect());
+			desc.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PITCH | DDSD_LPSURFACE;
+			desc.lPitch = gdiDesc.lPitch;
+			desc.lpSurface = gdiDesc.lpSurface;
+			m_surface->SetSurfaceDesc(m_surface, &desc, 0);
+		}
+
+		updateFrontResource();
+		D3dDdi::Device::setGdiResourceHandle(g_frontResource);
+
+		Surface::restore();
+	}
+
+	void PrimarySurface::updateFrontResource()
+	{
+		g_frontResource = getDriverResourceHandle(*g_primarySurface);
 	}
 
 	void PrimarySurface::updatePalette()
 	{
+		PALETTEENTRY entries[256] = {};
 		if (s_palette)
 		{
-			PrimarySurface::s_palette->GetEntries(s_palette, 0, 0, 256, s_paletteEntries);
-			RealPrimarySurface::update();
+			PrimarySurface::s_palette->GetEntries(s_palette, 0, 0, 256, entries);
 		}
+
+		if (RealPrimarySurface::isFullScreen())
+		{
+			if (!s_palette)
+			{
+				auto sysPalEntries(Gdi::Palette::getSystemPalette());
+				std::memcpy(entries, sysPalEntries.data(), sizeof(entries));
+			}
+			Gdi::Palette::setHardwarePalette(entries);
+		}
+		else if (s_palette)
+		{
+			Gdi::Palette::setSystemPalette(entries, 256, false);
+		}
+
+		RealPrimarySurface::update();
 	}
 
 	CompatWeakPtr<IDirectDrawPalette> PrimarySurface::s_palette;
-	PALETTEENTRY PrimarySurface::s_paletteEntries[256] = {};
 }

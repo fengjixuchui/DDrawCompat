@@ -2,16 +2,13 @@
 
 #include <ddraw.h>
 
-#include "Common/CompatRef.h"
-#include "Common/CompatVtable.h"
-#include "DDraw/Visitors/DirectDrawVtblVisitor.h"
-#include "DDraw/Types.h"
+#include <Common/CompatRef.h>
+#include <Common/CompatVtable.h>
+#include <DDraw/Visitors/DirectDrawVtblVisitor.h>
+#include <DDraw/Types.h>
 
 namespace DDraw
 {
-	template <typename TDirectDraw>
-	void* getDdObject(TDirectDraw& dd);
-
 	DDSURFACEDESC2 getDisplayMode(CompatRef<IDirectDraw7> dd);
 	DDPIXELFORMAT getRgbPixelFormat(DWORD bpp);
 	void suppressEmulatedDirectDraw(GUID*& guid);
@@ -32,19 +29,8 @@ namespace DDraw
 			IUnknown* pUnkOuter);
 
 		static HRESULT STDMETHODCALLTYPE FlipToGDISurface(TDirectDraw* This);
-		static HRESULT STDMETHODCALLTYPE GetDisplayMode(TDirectDraw* This, TSurfaceDesc* lpDDSurfaceDesc);
 		static HRESULT STDMETHODCALLTYPE GetGDISurface(TDirectDraw* This, TSurface** lplpGDIDDSSurface);
 		static HRESULT STDMETHODCALLTYPE Initialize(TDirectDraw* This, GUID* lpGUID);
-		static HRESULT STDMETHODCALLTYPE SetCooperativeLevel(TDirectDraw* This, HWND hWnd, DWORD dwFlags);
-
-		template <typename... Params>
-		static HRESULT STDMETHODCALLTYPE SetDisplayMode(
-			TDirectDraw* This,
-			DWORD dwWidth,
-			DWORD dwHeight,
-			DWORD dwBPP,
-			Params... params);
-
 		static HRESULT STDMETHODCALLTYPE WaitForVerticalBlank(TDirectDraw* This, DWORD dwFlags, HANDLE hEvent);
 	};
 }

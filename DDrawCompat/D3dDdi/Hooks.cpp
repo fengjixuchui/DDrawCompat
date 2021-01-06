@@ -1,8 +1,8 @@
 #include <set>
 
-#include <Windows.h>
 #include <d3d.h>
 #include <d3dumddi.h>
+#include <winternl.h>
 #include <..\km\d3dkmthk.h>
 
 #include "Common/Hook.h"
@@ -47,6 +47,7 @@ namespace
 
 	HRESULT APIENTRY openAdapter(D3DDDIARG_OPENADAPTER* pOpenData)
 	{
+		D3dDdi::ScopedCriticalSection lock;
 		LOG_FUNC("openAdapter", pOpenData);
 		D3dDdi::AdapterCallbacks::hookVtable(pOpenData->pAdapterCallbacks);
 		HRESULT result = g_origOpenAdapter(pOpenData);
@@ -59,8 +60,8 @@ namespace
 				hookedUmdFileNames.insert(g_hookedUmdFileName);
 			}
 			g_ddiVersion = min(pOpenData->Version, pOpenData->DriverVersion);
-			D3dDdi::AdapterFuncs::hookDriverVtable(g_hookedUmdModule, pOpenData->hAdapter, pOpenData->pAdapterFuncs);
-			D3dDdi::AdapterFuncs::onOpenAdapter(g_hookedUmdModule, pOpenData->hAdapter);
+			D3dDdi::AdapterFuncs::hookVtable(g_hookedUmdModule, pOpenData->pAdapterFuncs);
+			D3dDdi::AdapterFuncs::onOpenAdapter(pOpenData->hAdapter, g_hookedUmdModule);
 		}
 		return LOG_RESULT(result);
 	}
@@ -99,5 +100,6 @@ namespace D3dDdi
 	void uninstallHooks()
 	{
 		unhookOpenAdapter();
+		KernelModeThunks::stopVsyncThread();
 	}
 }

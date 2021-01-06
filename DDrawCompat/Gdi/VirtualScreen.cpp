@@ -1,7 +1,11 @@
 #include <set>
 
+#include "Config/Config.h"
 #include "Common/ScopedCriticalSection.h"
+#include "D3dDdi/Device.h"
+#include "D3dDdi/ScopedCriticalSection.h"
 #include "DDraw/DirectDraw.h"
+#include "DDraw/RealPrimarySurface.h"
 #include "DDraw/ScopedThreadLock.h"
 #include "DDraw/Surfaces/PrimarySurface.h"
 #include "Gdi/Gdi.h"
@@ -34,7 +38,7 @@ namespace
 		return TRUE;
 	}
 
-	HBITMAP createDibSection(DWORD width, DWORD height, HANDLE section)
+	HBITMAP createDibSection(LONG width, LONG height, HANDLE section)
 	{
 		struct BITMAPINFO256 : public BITMAPINFO
 		{
@@ -44,7 +48,7 @@ namespace
 		BITMAPINFO256 bmi = {};
 		bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
 		bmi.bmiHeader.biWidth = width;
-		bmi.bmiHeader.biHeight = -static_cast<LONG>(height);
+		bmi.bmiHeader.biHeight = height;
 		bmi.bmiHeader.biPlanes = 1;
 		bmi.bmiHeader.biBitCount = static_cast<WORD>(g_bpp);
 		bmi.bmiHeader.biCompression = 8 == g_bpp ? BI_RGB : BI_BITFIELDS;
@@ -62,7 +66,7 @@ namespace
 		}
 
 		void* bits = nullptr;
-		return CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, &bits, section, 0);
+		return CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, &bits, section, 8);
 	}
 }
 
@@ -105,10 +109,10 @@ namespace Gdi
 			{
 				return nullptr;
 			}
-			return createDibSection(g_width, g_height, g_surfaceFileMapping);
+			return createDibSection(g_width, -g_height, g_surfaceFileMapping);
 		}
 
-		HBITMAP createOffScreenDib(DWORD width, DWORD height)
+		HBITMAP createOffScreenDib(LONG width, LONG height)
 		{
 			Compat::ScopedCriticalSection lock(g_cs);
 			return createDibSection(width, height, nullptr);
@@ -117,33 +121,22 @@ namespace Gdi
 		CompatPtr<IDirectDrawSurface7> createSurface(const RECT& rect)
 		{
 			DDraw::ScopedThreadLock ddLock;
+			D3dDdi::ScopedCriticalSection driverLock;
 			Compat::ScopedCriticalSection lock(g_cs);
 
-			if (rect.left < g_bounds.left || rect.top < g_bounds.top ||
-				rect.right > g_bounds.right || rect.bottom > g_bounds.bottom)
+			auto desc = getSurfaceDesc(rect);
+			if (!desc.lpSurface)
 			{
 				return nullptr;
 			}
 
-			DDSURFACEDESC2 desc = {};
-			desc.dwSize = sizeof(desc);
-			desc.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_CAPS | DDSD_PITCH | DDSD_LPSURFACE;
-			desc.dwWidth = rect.right - rect.left;
-			desc.dwHeight = rect.bottom - rect.top;
-			desc.ddpfPixelFormat = DDraw::getRgbPixelFormat(g_bpp);
-			desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
-			desc.lPitch = g_pitch;
-			desc.lpSurface = static_cast<unsigned char*>(g_surfaceView) +
-				(rect.top - g_bounds.top) * g_pitch +
-				(rect.left - g_bounds.left) * g_bpp / 8;
-
 			auto primary(DDraw::PrimarySurface::getPrimary());
 			CompatPtr<IUnknown> ddUnk;
-			primary.get()->lpVtbl->GetDDInterface(primary, reinterpret_cast<void**>(&ddUnk.getRef()));
+			primary->GetDDInterface(primary, reinterpret_cast<void**>(&ddUnk.getRef()));
 			CompatPtr<IDirectDraw7> dd(ddUnk);
 
 			CompatPtr<IDirectDrawSurface7> surface;
-			dd->CreateSurface(dd, &desc, &surface.getRef(), nullptr);
+			dd.get()->lpVtbl->CreateSurface(dd, &desc, &surface.getRef(), nullptr);
 			return surface;
 		}
 
@@ -172,6 +165,29 @@ namespace Gdi
 			return g_region;
 		}
 
+		DDSURFACEDESC2 getSurfaceDesc(const RECT& rect)
+		{
+			Compat::ScopedCriticalSection lock(g_cs);
+			if (rect.left < g_bounds.left || rect.top < g_bounds.top ||
+				rect.right > g_bounds.right || rect.bottom > g_bounds.bottom)
+			{
+				return {};
+			}
+
+			DDSURFACEDESC2 desc = {};
+			desc.dwSize = sizeof(desc);
+			desc.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_CAPS | DDSD_PITCH | DDSD_LPSURFACE;
+			desc.dwWidth = rect.right - rect.left;
+			desc.dwHeight = rect.bottom - rect.top;
+			desc.ddpfPixelFormat = DDraw::getRgbPixelFormat(g_bpp);
+			desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
+			desc.lPitch = g_pitch;
+			desc.lpSurface = static_cast<unsigned char*>(g_surfaceView) + 8 +
+				(rect.top - g_bounds.top) * g_pitch +
+				(rect.left - g_bounds.left) * g_bpp / 8;
+			return desc;
+		}
+
 		void init()
 		{
 			update();
@@ -184,39 +200,45 @@ namespace Gdi
 
 			static auto prevDisplaySettingsUniqueness = Win32::DisplayMode::queryDisplaySettingsUniqueness() - 1;
 			const auto currentDisplaySettingsUniqueness = Win32::DisplayMode::queryDisplaySettingsUniqueness();
-			if (currentDisplaySettingsUniqueness == prevDisplaySettingsUniqueness)
+			const auto bpp = Win32::DisplayMode::getBpp();
+			if (currentDisplaySettingsUniqueness == prevDisplaySettingsUniqueness && bpp == g_bpp)
 			{
 				return LOG_RESULT(false);
 			}
 
 			prevDisplaySettingsUniqueness = currentDisplaySettingsUniqueness;
 
-			g_region = Region();
-			EnumDisplayMonitors(nullptr, nullptr, addMonitorRectToRegion, reinterpret_cast<LPARAM>(&g_region));
-			GetRgnBox(g_region, &g_bounds);
-
-			g_bpp = Win32::DisplayMode::getBpp();
-			g_width = g_bounds.right - g_bounds.left;
-			g_height = g_bounds.bottom - g_bounds.top;
-			g_pitch = (g_width * g_bpp / 8 + 3) & ~3;
-
-			if (g_surfaceFileMapping)
 			{
+				D3dDdi::ScopedCriticalSection driverLock;
+				D3dDdi::Device::setGdiResourceHandle(nullptr);
+
+				g_region = Region();
+				EnumDisplayMonitors(nullptr, nullptr, addMonitorRectToRegion, reinterpret_cast<LPARAM>(&g_region));
+				GetRgnBox(g_region, &g_bounds);
+
+				g_bpp = bpp;
+				g_width = g_bounds.right - g_bounds.left;
+				g_height = g_bounds.bottom - g_bounds.top;
+				g_pitch = (g_width * g_bpp / 8 + 3) & ~3;
+
+				if (g_surfaceFileMapping)
+				{
+					for (HDC dc : g_dcs)
+					{
+						DeleteObject(SelectObject(dc, g_stockBitmap));
+					}
+					UnmapViewOfFile(g_surfaceView);
+					CloseHandle(g_surfaceFileMapping);
+				}
+
+				g_surfaceFileMapping = CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
+					g_pitch * g_height + 8, nullptr);
+				g_surfaceView = MapViewOfFile(g_surfaceFileMapping, FILE_MAP_WRITE, 0, 0, 0);
+
 				for (HDC dc : g_dcs)
 				{
-					DeleteObject(SelectObject(dc, g_stockBitmap));
+					SelectObject(dc, createDib());
 				}
-				UnmapViewOfFile(g_surfaceView);
-				CloseHandle(g_surfaceFileMapping);
-			}
-
-			g_surfaceFileMapping = CreateFileMapping(
-				INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, g_pitch * g_height, nullptr);
-			g_surfaceView = MapViewOfFile(g_surfaceFileMapping, FILE_MAP_WRITE, 0, 0, 0);
-
-			for (HDC dc : g_dcs)
-			{
-				SelectObject(dc, createDib());
 			}
 
 			Gdi::redraw(nullptr);
@@ -243,6 +265,8 @@ namespace Gdi
 					SetDIBColorTable(dc, 0, 256, systemPalette);
 				}
 			}
+
+			DDraw::RealPrimarySurface::scheduleUpdate();
 		}
 	}
 }

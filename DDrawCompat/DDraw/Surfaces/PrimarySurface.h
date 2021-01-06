@@ -17,26 +17,24 @@ namespace DDraw
 		static HRESULT create(CompatRef<TDirectDraw> dd, TSurfaceDesc desc, TSurface*& surface);
 
 		static HRESULT flipToGdiSurface();
-		static const DDSURFACEDESC2& getDesc();
 		static CompatPtr<IDirectDrawSurface7> getGdiSurface();
 		static CompatPtr<IDirectDrawSurface7> getBackBuffer();
 		static CompatPtr<IDirectDrawSurface7> getLastSurface();
 		static CompatWeakPtr<IDirectDrawSurface7> getPrimary();
+		static HANDLE getFrontResource();
 		static DWORD getOrigCaps();
-		static void onRestore();
 		static void updatePalette();
 
 		template <typename TSurface>
 		static bool isGdiSurface(TSurface* surface);
 
+		static void updateFrontResource();
+
+		virtual void restore();
+
 		static CompatWeakPtr<IDirectDrawPalette> s_palette;
-		static PALETTEENTRY s_paletteEntries[256];
 
 	private:
-		PrimarySurface(Surface* surface);
-
 		virtual void createImpl() override;
-
-		std::unique_ptr<Surface> m_surface;
 	};
 }

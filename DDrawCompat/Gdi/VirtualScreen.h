@@ -1,7 +1,5 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <Windows.h>
 
 #include "Common/CompatPtr.h"
@@ -14,12 +12,13 @@ namespace Gdi
 	{
 		HDC createDc();
 		HBITMAP createDib();
-		HBITMAP createOffScreenDib(DWORD width, DWORD height);
+		HBITMAP createOffScreenDib(LONG width, LONG height);
 		CompatPtr<IDirectDrawSurface7> createSurface(const RECT& rect);
 		void deleteDc(HDC dc);
 
 		RECT getBounds();
 		Region getRegion();
+		DDSURFACEDESC2 getSurfaceDesc(const RECT& rect);
 
 		void init();
 		bool update();

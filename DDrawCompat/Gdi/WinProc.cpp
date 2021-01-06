@@ -1,92 +1,146 @@
-#define WIN32_LEAN_AND_MEAN
-
 #include <map>
 #include <set>
 
-#include <dwmapi.h>
 #include <Windows.h>
 
-#include "Common/Hook.h"
-#include "Common/Log.h"
-#include "Common/ScopedCriticalSection.h"
-#include "Gdi/AccessGuard.h"
-#include "Gdi/Dc.h"
-#include "Win32/DisplayMode.h"
-#include "Gdi/PaintHandlers.h"
-#include "Gdi/ScrollBar.h"
-#include "Gdi/ScrollFunctions.h"
-#include "Gdi/TitleBar.h"
-#include "Gdi/Window.h"
-#include "Gdi/WinProc.h"
-
-extern "C" IMAGE_DOS_HEADER __ImageBase;
+#include <Common/Hook.h>
+#include <Common/Log.h>
+#include <Common/ScopedCriticalSection.h>
+#include <Dll/Dll.h>
+#include <Gdi/AccessGuard.h>
+#include <Gdi/Dc.h>
+#include <Win32/DisplayMode.h>
+#include <Gdi/ScrollBar.h>
+#include <Gdi/ScrollFunctions.h>
+#include <Gdi/TitleBar.h>
+#include <Gdi/Window.h>
+#include <Gdi/WinProc.h>
 
 namespace
 {
-	std::multimap<DWORD, HHOOK> g_threadIdToHook;
-	Compat::CriticalSection g_threadIdToHookCs;
+	const char* PROP_DDRAWCOMPAT = "DDrawCompat";
+
+	struct ChildWindowInfo
+	{
+		RECT rect;
+		Gdi::Region visibleRegion;
+
+		ChildWindowInfo() : rect{} {}
+	};
+
+	struct WindowProc
+	{
+		WNDPROC wndProcA;
+		WNDPROC wndProcW;
+	};
+
 	HWINEVENTHOOK g_objectCreateEventHook = nullptr;
 	HWINEVENTHOOK g_objectStateChangeEventHook = nullptr;
 	std::set<Gdi::WindowPosChangeNotifyFunc> g_windowPosChangeNotifyFuncs;
 
-	void disableDwmAttributes(HWND hwnd);
+	Compat::CriticalSection g_windowProcCs;
+	std::map<HWND, WindowProc> g_windowProc;
+
+	WindowProc getWindowProc(HWND hwnd);
 	void onActivate(HWND hwnd);
 	void onCreateWindow(HWND hwnd);
 	void onDestroyWindow(HWND hwnd);
 	void onWindowPosChanged(HWND hwnd);
-	void removeDropShadow(HWND hwnd);
+	void onWindowPosChanging(HWND hwnd, const WINDOWPOS& wp);
+	void setWindowProc(HWND hwnd, WNDPROC wndProcA, WNDPROC wndProcW);
 
-	LRESULT CALLBACK callWndRetProc(int nCode, WPARAM wParam, LPARAM lParam)
+	LRESULT CALLBACK ddcWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+		decltype(&CallWindowProcA) callWindowProc, WNDPROC wndProc)
 	{
-		auto ret = reinterpret_cast<CWPRETSTRUCT*>(lParam);
-		LOG_FUNC("callWndRetProc", Compat::hex(nCode), Compat::hex(wParam), ret);
+		LOG_FUNC("ddcWindowProc", Compat::WindowMessageStruct(hwnd, uMsg, wParam, lParam));
+		LRESULT result = callWindowProc(wndProc, hwnd, uMsg, wParam, lParam);
 
-		if (HC_ACTION == nCode && !Gdi::Window::isPresentationWindow(ret->hwnd))
+		switch (uMsg)
 		{
-			if (WM_DESTROY == ret->message)
+		case WM_ACTIVATE:
+			onActivate(hwnd);
+			break;
+
+		case WM_COMMAND:
+		{
+			auto notifCode = HIWORD(wParam);
+			if (lParam && (EN_HSCROLL == notifCode || EN_VSCROLL == notifCode))
 			{
-				onDestroyWindow(ret->hwnd);
+				Gdi::ScrollFunctions::updateScrolledWindow(reinterpret_cast<HWND>(lParam));
 			}
-			else if (WM_WINDOWPOSCHANGED == ret->message)
-			{
-				onWindowPosChanged(ret->hwnd);
-			}
-			else if (WM_ACTIVATE == ret->message)
-			{
-				onActivate(ret->hwnd);
-			}
-			else if (WM_COMMAND == ret->message)
-			{
-				auto notifCode = HIWORD(ret->wParam);
-				if (ret->lParam && (EN_HSCROLL == notifCode || EN_VSCROLL == notifCode))
-				{
-					Gdi::ScrollFunctions::updateScrolledWindow(reinterpret_cast<HWND>(ret->lParam));
-				}
-			}
+			break;
 		}
 
-		return LOG_RESULT(CallNextHookEx(nullptr, nCode, wParam, lParam));
-	}
+		case WM_NCDESTROY:
+			onDestroyWindow(hwnd);
+			break;
 
-	void disableDwmAttributes(HWND hwnd)
-	{
-		DWMNCRENDERINGPOLICY ncRenderingPolicy = DWMNCRP_DISABLED;
-		DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY,
-			&ncRenderingPolicy, sizeof(ncRenderingPolicy));
+		case WM_STYLECHANGED:
+			if (GWL_EXSTYLE == wParam)
+			{
+				onWindowPosChanged(hwnd);
+			}
+			break;
 
-		BOOL disableTransitions = TRUE;
-		DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED,
-			&disableTransitions, sizeof(disableTransitions));
-	}
+		case WM_WINDOWPOSCHANGED:
+			onWindowPosChanged(hwnd);
+			break;
 
-	void hookThread(DWORD threadId)
-	{
-		Compat::ScopedCriticalSection lock(g_threadIdToHookCs);
-		if (g_threadIdToHook.end() == g_threadIdToHook.find(threadId))
-		{
-			g_threadIdToHook.emplace(threadId,
-				SetWindowsHookEx(WH_CALLWNDPROCRET, callWndRetProc, nullptr, threadId));
+		case WM_WINDOWPOSCHANGING:
+			onWindowPosChanging(hwnd, *reinterpret_cast<WINDOWPOS*>(lParam));
+			break;
 		}
+
+		return LOG_RESULT(result);
+	}
+
+	LRESULT CALLBACK ddcWindowProcA(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+	{
+		return ddcWindowProc(hwnd, uMsg, wParam, lParam, CallWindowProcA, getWindowProc(hwnd).wndProcA);
+	}
+
+	LRESULT CALLBACK ddcWindowProcW(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+	{
+		return ddcWindowProc(hwnd, uMsg, wParam, lParam, CallWindowProcW, getWindowProc(hwnd).wndProcW);
+	}
+
+	LONG getWindowLong(HWND hWnd, int nIndex,
+		decltype(&GetWindowLongA) origGetWindowLong, WNDPROC(WindowProc::* wndProc))
+	{
+		if (GWL_WNDPROC == nIndex)
+		{
+			Compat::ScopedCriticalSection lock(g_windowProcCs);
+			auto it = g_windowProc.find(hWnd);
+			if (it != g_windowProc.end())
+			{
+				return reinterpret_cast<LONG>(it->second.*wndProc);
+			}
+		}
+		return origGetWindowLong(hWnd, nIndex);
+	}
+
+	LONG WINAPI getWindowLongA(HWND hWnd, int nIndex)
+	{
+		LOG_FUNC("GetWindowLongA", hWnd, nIndex);
+		return LOG_RESULT(getWindowLong(hWnd, nIndex, CALL_ORIG_FUNC(GetWindowLongA), &WindowProc::wndProcA));
+	}
+
+	LONG WINAPI getWindowLongW(HWND hWnd, int nIndex)
+	{
+		LOG_FUNC("GetWindowLongW", hWnd, nIndex);
+		return LOG_RESULT(getWindowLong(hWnd, nIndex, CALL_ORIG_FUNC(GetWindowLongW), &WindowProc::wndProcW));
+	}
+
+	WindowProc getWindowProc(HWND hwnd)
+	{
+		Compat::ScopedCriticalSection lock(g_windowProcCs);
+		return g_windowProc[hwnd];
+	}
+
+	BOOL CALLBACK initChildWindow(HWND hwnd, LPARAM /*lParam*/)
+	{
+		onCreateWindow(hwnd);
+		return TRUE;
 	}
 
 	BOOL CALLBACK initTopLevelWindow(HWND hwnd, LPARAM /*lParam*/)
@@ -96,6 +150,7 @@ namespace
 		if (GetCurrentProcessId() == windowPid)
 		{
 			onCreateWindow(hwnd);
+			EnumChildWindows(hwnd, &initChildWindow, 0);
 			if (8 == Win32::DisplayMode::getBpp())
 			{
 				PostMessage(hwnd, WM_PALETTECHANGED, reinterpret_cast<WPARAM>(GetDesktopWindow()), 0);
@@ -139,7 +194,7 @@ namespace
 			HDC compatDc = Gdi::Dc::getDc(windowDc);
 			if (compatDc)
 			{
-				Gdi::GdiAccessGuard accessGuard(Gdi::ACCESS_WRITE);
+				Gdi::AccessGuard accessGuard(Gdi::ACCESS_WRITE);
 				if (OBJID_TITLEBAR == idObject)
 				{
 					Gdi::TitleBar(hwnd, compatDc).drawButtons();
@@ -178,23 +233,54 @@ namespace
 
 	void onCreateWindow(HWND hwnd)
 	{
-		hookThread(GetWindowThreadProcessId(hwnd, nullptr));
-		disableDwmAttributes(hwnd);
-		removeDropShadow(hwnd);
-		Gdi::PaintHandlers::onCreateWindow(hwnd);
+		char className[64] = {};
+		GetClassName(hwnd, className, sizeof(className));
+		if (std::string(className) == "CompatWindowDesktopReplacement")
+		{
+			// Disable VirtualizeDesktopPainting shim
+			SendNotifyMessage(hwnd, WM_CLOSE, 0, 0);
+			return;
+		}
+
+		if (!Gdi::Window::isPresentationWindow(hwnd))
+		{
+			Compat::ScopedCriticalSection lock(g_windowProcCs);
+			if (g_windowProc.find(hwnd) == g_windowProc.end())
+			{
+				auto wndProcA = reinterpret_cast<WNDPROC>(CALL_ORIG_FUNC(GetWindowLongA)(hwnd, GWL_WNDPROC));
+				auto wndProcW = reinterpret_cast<WNDPROC>(CALL_ORIG_FUNC(GetWindowLongW)(hwnd, GWL_WNDPROC));
+				g_windowProc[hwnd] = { wndProcA, wndProcW };
+				setWindowProc(hwnd, ddcWindowProcA, ddcWindowProcW);
+			}
+		}
+
 		Gdi::Window::add(hwnd);
 	}
 
 	void onDestroyWindow(HWND hwnd)
 	{
 		Gdi::Window::remove(hwnd);
+		delete reinterpret_cast<ChildWindowInfo*>(RemoveProp(hwnd, PROP_DDRAWCOMPAT));
+
+		Compat::ScopedCriticalSection lock(g_windowProcCs);
+		auto it = g_windowProc.find(hwnd);
+		if (it != g_windowProc.end())
+		{
+			setWindowProc(hwnd, it->second.wndProcA, it->second.wndProcW);
+			g_windowProc.erase(it);
+		}
 	}
 
 	void onWindowPosChanged(HWND hwnd)
 	{
 		if (Gdi::MENU_ATOM == GetClassLongPtr(hwnd, GCW_ATOM))
 		{
-			SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) & ~WS_EX_LAYERED);
+			auto exStyle = CALL_ORIG_FUNC(GetWindowLongA)(hwnd, GWL_EXSTYLE);
+			if (exStyle & WS_EX_LAYERED)
+			{
+				CALL_ORIG_FUNC(SetWindowLongA)(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_LAYERED);
+				return;
+			}
 		}
 
 		for (auto notifyFunc : g_windowPosChangeNotifyFuncs)
@@ -202,18 +288,114 @@ namespace
 			notifyFunc();
 		}
 
-		if (Gdi::Window::get(hwnd))
+		if (Gdi::Window::isTopLevelWindow(hwnd))
 		{
+			Gdi::Window::add(hwnd);
 			Gdi::Window::updateAll();
+		}
+		else
+		{
+			std::unique_ptr<ChildWindowInfo> cwi(reinterpret_cast<ChildWindowInfo*>(RemoveProp(hwnd, PROP_DDRAWCOMPAT)));
+			if (cwi && IsWindowVisible(hwnd) && !IsIconic(GetAncestor(hwnd, GA_ROOT)))
+			{
+				RECT rect = {};
+				GetWindowRect(hwnd, &rect);
+				if (rect.left != cwi->rect.left || rect.top != cwi->rect.top)
+				{
+					Gdi::Region clipRegion(hwnd);
+					cwi->visibleRegion.offset(rect.left - cwi->rect.left, rect.top - cwi->rect.top);
+					clipRegion &= cwi->visibleRegion;
+
+					HDC screenDc = GetDC(nullptr);
+					SelectClipRgn(screenDc, clipRegion);
+					BitBlt(screenDc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+						screenDc, cwi->rect.left, cwi->rect.top, SRCCOPY);
+					SelectClipRgn(screenDc, nullptr);
+					CALL_ORIG_FUNC(ReleaseDC)(nullptr, screenDc);
+				}
+			}
 		}
 	}
 
-	void removeDropShadow(HWND hwnd)
+	void onWindowPosChanging(HWND hwnd, const WINDOWPOS& wp)
 	{
-		const auto style = GetClassLongPtr(hwnd, GCL_STYLE);
-		if (style & CS_DROPSHADOW)
+		if (!Gdi::Window::isTopLevelWindow(hwnd))
 		{
-			SetClassLongPtr(hwnd, GCL_STYLE, style ^ CS_DROPSHADOW);
+			std::unique_ptr<ChildWindowInfo> cwi(reinterpret_cast<ChildWindowInfo*>(RemoveProp(hwnd, PROP_DDRAWCOMPAT)));
+			if (!(wp.flags & SWP_NOMOVE) && IsWindowVisible(hwnd) && !IsIconic(GetAncestor(hwnd, GA_ROOT)))
+			{
+				cwi.reset(new ChildWindowInfo());
+				GetWindowRect(hwnd, &cwi->rect);
+				cwi->visibleRegion = hwnd;
+				if (!cwi->visibleRegion.isEmpty())
+				{
+					SetProp(hwnd, PROP_DDRAWCOMPAT, cwi.release());
+				}
+			}
+		}
+	}
+
+	LONG setWindowLong(HWND hWnd, int nIndex, LONG dwNewLong,
+		decltype(&SetWindowLongA) origSetWindowLong, WNDPROC(WindowProc::* wndProc))
+	{
+		if (GWL_WNDPROC == nIndex)
+		{
+			Compat::ScopedCriticalSection lock(g_windowProcCs);
+			auto it = g_windowProc.find(hWnd);
+			if (it != g_windowProc.end() && 0 != origSetWindowLong(hWnd, nIndex, dwNewLong))
+			{
+				WNDPROC oldWndProc = it->second.*wndProc;
+				it->second.wndProcA = reinterpret_cast<WNDPROC>(CALL_ORIG_FUNC(GetWindowLongA)(hWnd, GWL_WNDPROC));
+				it->second.wndProcW = reinterpret_cast<WNDPROC>(CALL_ORIG_FUNC(GetWindowLongW)(hWnd, GWL_WNDPROC));
+				WindowProc newWindowProc = { ddcWindowProcA, ddcWindowProcW };
+				origSetWindowLong(hWnd, GWL_WNDPROC, reinterpret_cast<LONG>(newWindowProc.*wndProc));
+				return reinterpret_cast<LONG>(oldWndProc);
+			}
+		}
+		return origSetWindowLong(hWnd, nIndex, dwNewLong);
+	}
+
+	LONG WINAPI setWindowLongA(HWND hWnd, int nIndex, LONG dwNewLong)
+	{
+		LOG_FUNC("SetWindowLongA", hWnd, nIndex, dwNewLong);
+		return LOG_RESULT(setWindowLong(hWnd, nIndex, dwNewLong, CALL_ORIG_FUNC(SetWindowLongA), &WindowProc::wndProcA));
+	}
+
+	LONG WINAPI setWindowLongW(HWND hWnd, int nIndex, LONG dwNewLong)
+	{
+		LOG_FUNC("SetWindowLongW", hWnd, nIndex, dwNewLong);
+		return LOG_RESULT(setWindowLong(hWnd, nIndex, dwNewLong, CALL_ORIG_FUNC(SetWindowLongW), &WindowProc::wndProcW));
+	}
+
+	BOOL WINAPI setWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags)
+	{
+		LOG_FUNC("SetWindowPos", hWnd, hWndInsertAfter, X, Y, cx, cy, Compat::hex(uFlags));
+		if (uFlags & SWP_NOSENDCHANGING)
+		{
+			WINDOWPOS wp = {};
+			wp.hwnd = hWnd;
+			wp.hwndInsertAfter = hWndInsertAfter;
+			wp.x = X;
+			wp.y = Y;
+			wp.cx = cx;
+			wp.cy = cy;
+			wp.flags = uFlags;
+			onWindowPosChanging(hWnd, wp);
+		}
+		BOOL result = CALL_ORIG_FUNC(SetWindowPos)(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
+		delete reinterpret_cast<ChildWindowInfo*>(RemoveProp(hWnd, PROP_DDRAWCOMPAT));
+		return LOG_RESULT(result);
+	}
+
+	void setWindowProc(HWND hwnd, WNDPROC wndProcA, WNDPROC wndProcW)
+	{
+		if (IsWindowUnicode(hwnd))
+		{
+			CALL_ORIG_FUNC(SetWindowLongW)(hwnd, GWL_WNDPROC, reinterpret_cast<LONG>(wndProcW));
+		}
+		else
+		{
+			CALL_ORIG_FUNC(SetWindowLongA)(hwnd, GWL_WNDPROC, reinterpret_cast<LONG>(wndProcA));
 		}
 	}
 }
@@ -224,28 +406,37 @@ namespace Gdi
 	{
 		void dllThreadDetach()
 		{
-			Compat::ScopedCriticalSection lock(g_threadIdToHookCs);
-			const DWORD threadId = GetCurrentThreadId();
-			for (auto threadIdToHook : g_threadIdToHook)
+			auto threadId = GetCurrentThreadId();
+			Compat::ScopedCriticalSection lock(g_windowProcCs);
+			auto it = g_windowProc.begin();
+			while (it != g_windowProc.end())
 			{
-				if (threadId == threadIdToHook.first)
+				if (threadId == GetWindowThreadProcessId(it->first, nullptr))
 				{
-					UnhookWindowsHookEx(threadIdToHook.second);
+					it = g_windowProc.erase(it);
+				}
+				else
+				{
+					++it;
 				}
 			}
-			g_threadIdToHook.erase(threadId);
 		}
 
 		void installHooks()
 		{
+			HOOK_FUNCTION(user32, GetWindowLongA, getWindowLongA);
+			HOOK_FUNCTION(user32, GetWindowLongW, getWindowLongW);
+			HOOK_FUNCTION(user32, SetWindowLongA, setWindowLongA);
+			HOOK_FUNCTION(user32, SetWindowLongW, setWindowLongW);
+			HOOK_FUNCTION(user32, SetWindowPos, setWindowPos);
+
 			g_objectCreateEventHook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_CREATE,
-				reinterpret_cast<HMODULE>(&__ImageBase), &objectCreateEvent,
-				GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
+				Dll::g_currentModule, &objectCreateEvent, GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
 			g_objectStateChangeEventHook = SetWinEventHook(EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_STATECHANGE,
-				reinterpret_cast<HMODULE>(&__ImageBase), &objectStateChangeEvent,
-				GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
+				Dll::g_currentModule, &objectStateChangeEvent, GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
 
 			EnumWindows(initTopLevelWindow, 0);
+			Gdi::Window::updateAll();
 		}
 
 		void watchWindowPosChanges(WindowPosChangeNotifyFunc notifyFunc)
@@ -258,14 +449,12 @@ namespace Gdi
 			UnhookWinEvent(g_objectStateChangeEventHook);
 			UnhookWinEvent(g_objectCreateEventHook);
 
+			Compat::ScopedCriticalSection lock(g_windowProcCs);
+			for (const auto& windowProc : g_windowProc)
 			{
-				Compat::ScopedCriticalSection lock(g_threadIdToHookCs);
-				for (auto threadIdToHook : g_threadIdToHook)
-				{
-					UnhookWindowsHookEx(threadIdToHook.second);
-				}
-				g_threadIdToHook.clear();
+				setWindowProc(windowProc.first, windowProc.second.wndProcA, windowProc.second.wndProcW);
 			}
+			g_windowProc.clear();
 		}
 	}
 }

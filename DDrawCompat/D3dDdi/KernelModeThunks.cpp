@@ -1,20 +1,20 @@
-#include <atomic>
-#include <map>
 #include <string>
 
-#include <d3d.h>
-#include <d3dumddi.h>
-#include <../km/d3dkmthk.h>
-
-#include "Common/Log.h"
-#include "Common/Hook.h"
-#include "Common/ScopedCriticalSection.h"
-#include "Common/Time.h"
-#include "D3dDdi/Hooks.h"
-#include "D3dDdi/KernelModeThunks.h"
-#include "D3dDdi/Log/KernelModeThunksLog.h"
-#include "DDraw/Surfaces/PrimarySurface.h"
-#include "Win32/DisplayMode.h"
+#include <Common/Log.h>
+#include <Common/Hook.h>
+#include <Common/ScopedSrwLock.h>
+#include <Common/Time.h>
+#include <D3dDdi/Device.h>
+#include <D3dDdi/Hooks.h>
+#include <D3dDdi/KernelModeThunks.h>
+#include <D3dDdi/Log/KernelModeThunksLog.h>
+#include <D3dDdi/Resource.h>
+#include <D3dDdi/ScopedCriticalSection.h>
+#include <DDraw/RealPrimarySurface.h>
+#include <DDraw/ScopedThreadLock.h>
+#include <DDraw/Surfaces/PrimarySurface.h>
+#include <Gdi/Palette.h>
+#include <Win32/DisplayMode.h>
 
 namespace
 {
@@ -25,88 +25,85 @@ namespace
 		RECT monitorRect;
 	};
 
-	struct ContextInfo
-	{
-		D3DKMT_HANDLE device;
-
-		ContextInfo() : device(0) {}
-	};
-
-	std::map<D3DKMT_HANDLE, ContextInfo> g_contexts;
+	D3DDDIFORMAT g_dcFormatOverride = D3DDDIFMT_UNKNOWN;
+	bool g_dcPaletteOverride = false;
 	AdapterInfo g_gdiAdapterInfo = {};
 	AdapterInfo g_lastOpenAdapterInfo = {};
+	Compat::SrwLock g_lastOpenAdapterInfoSrwLock;
 	std::string g_lastDDrawCreateDcDevice;
-	UINT g_lastFlipInterval = 0;
-	UINT g_flipIntervalOverride = 0;
-	D3DKMT_HANDLE g_lastPresentContext = 0;
-	UINT g_presentCount = 0;
-	std::atomic<long long> g_qpcLastVerticalBlank = 0;
-	Compat::CriticalSection g_vblankCs;
 
-	decltype(D3DKMTCreateContextVirtual)* g_origD3dKmtCreateContextVirtual = nullptr;
+	HANDLE g_vsyncThread = nullptr;
+	bool g_stopVsyncThread = false;
+	UINT g_vsyncCounter = 0;
+	CONDITION_VARIABLE g_vsyncCounterCv = CONDITION_VARIABLE_INIT;
+	Compat::SrwLock g_vsyncCounterSrwLock;
+
+	void waitForVerticalBlank();
 
 	NTSTATUS APIENTRY closeAdapter(const D3DKMT_CLOSEADAPTER* pData)
 	{
-		Compat::ScopedCriticalSection lock(g_vblankCs);
+		Compat::ScopedSrwLockExclusive lock(g_lastOpenAdapterInfoSrwLock);
 		if (pData && pData->hAdapter == g_lastOpenAdapterInfo.adapter)
 		{
 			g_lastOpenAdapterInfo = {};
 		}
-		return CALL_ORIG_FUNC(D3DKMTCloseAdapter)(pData);
-	}
-
-	NTSTATUS APIENTRY createContext(D3DKMT_CREATECONTEXT* pData)
-	{
-		LOG_FUNC("D3DKMTCreateContext", pData);
-		NTSTATUS result = CALL_ORIG_FUNC(D3DKMTCreateContext)(pData);
-		if (SUCCEEDED(result))
-		{
-			g_contexts[pData->hContext].device = pData->hDevice;
-		}
-		return LOG_RESULT(result);
-	}
-
-	NTSTATUS APIENTRY createContextVirtual(D3DKMT_CREATECONTEXTVIRTUAL* pData)
-	{
-		LOG_FUNC("D3DKMTCreateContextVirtual", pData);
-		NTSTATUS result = g_origD3dKmtCreateContextVirtual(pData);
-		if (SUCCEEDED(result))
-		{
-			g_contexts[pData->hContext].device = pData->hDevice;
-		}
-		return LOG_RESULT(result);
+		return D3DKMTCloseAdapter(pData);
 	}
 
 	NTSTATUS APIENTRY createDcFromMemory(D3DKMT_CREATEDCFROMMEMORY* pData)
 	{
 		LOG_FUNC("D3DKMTCreateDCFromMemory", pData);
-		NTSTATUS result = 0;
-		if (pData && D3DDDIFMT_P8 == pData->Format && !pData->pColorTable &&
-			DDraw::PrimarySurface::s_palette)
-		{
-			pData->pColorTable = DDraw::PrimarySurface::s_paletteEntries;
-			result = CALL_ORIG_FUNC(D3DKMTCreateDCFromMemory)(pData);
-			pData->pColorTable = nullptr;
-		}
-		else
-		{
-			result = CALL_ORIG_FUNC(D3DKMTCreateDCFromMemory)(pData);
-		}
-		return LOG_RESULT(result);
-	}
 
-	NTSTATUS APIENTRY createDevice(D3DKMT_CREATEDEVICE* pData)
-	{
-		LOG_FUNC("D3DKMTCreateDevice", pData);
-		NTSTATUS result = CALL_ORIG_FUNC(D3DKMTCreateDevice)(pData);
-		if (SUCCEEDED(result))
+		auto origFormat = pData->Format;
+		if (D3DDDIFMT_UNKNOWN != g_dcFormatOverride)
 		{
-			D3DKMT_SETQUEUEDLIMIT limit = {};
-			limit.hDevice = pData->hDevice;
-			limit.Type = D3DKMT_SET_QUEUEDLIMIT_PRESENT;
-			limit.QueuedPresentLimit = 2;
-			CALL_ORIG_FUNC(D3DKMTSetQueuedLimit)(&limit);
+			pData->Format = g_dcFormatOverride;
 		}
+
+		std::vector<PALETTEENTRY> palette;
+		auto origColorTable = pData->pColorTable;
+
+		if (D3DDDIFMT_P8 == pData->Format)
+		{
+			if (g_dcPaletteOverride)
+			{
+				palette = Gdi::Palette::getHardwarePalette();
+				pData->pColorTable = palette.data();
+			}
+			else
+			{
+				DDraw::ScopedThreadLock ddLock;
+				D3dDdi::ScopedCriticalSection driverLock;
+				auto primaryResource = D3dDdi::Device::findResource(DDraw::PrimarySurface::getFrontResource());
+				if (primaryResource && pData->pMemory == primaryResource->getLockPtr(0) &&
+					(DDraw::PrimarySurface::getOrigCaps() & DDSCAPS_COMPLEX))
+				{
+					pData->pColorTable = Gdi::Palette::getDefaultPalette();
+				}
+				else if (pData->pColorTable)
+				{
+					palette.assign(pData->pColorTable, pData->pColorTable + 256);
+					auto sysPal = Gdi::Palette::getSystemPalette();
+					for (UINT i = 0; i < 256; ++i)
+					{
+						if (palette[i].peFlags & PC_EXPLICIT)
+						{
+							palette[i] = sysPal[palette[i].peRed];
+						}
+					}
+					pData->pColorTable = palette.data();
+				}
+				else
+				{
+					palette = Gdi::Palette::getHardwarePalette();
+					pData->pColorTable = palette.data();
+				}
+			}
+		}
+
+		auto result = D3DKMTCreateDCFromMemory(pData);
+		pData->Format = origFormat;
+		pData->pColorTable = origColorTable;
 		return LOG_RESULT(result);
 	}
 
@@ -114,22 +111,7 @@ namespace
 	{
 		LOG_FUNC("ddrawCreateDCA", pwszDriver, pwszDevice, pszPort, pdm);
 		g_lastDDrawCreateDcDevice = pwszDevice ? pwszDevice : std::string();
-		return LOG_RESULT(CALL_ORIG_FUNC(CreateDCA)(pwszDriver, pwszDevice, pszPort, pdm));
-	}
-
-	NTSTATUS APIENTRY destroyContext(const D3DKMT_DESTROYCONTEXT* pData)
-	{
-		LOG_FUNC("D3DKMTDestroyContext", pData);
-		NTSTATUS result = CALL_ORIG_FUNC(D3DKMTDestroyContext)(pData);
-		if (SUCCEEDED(result))
-		{
-			g_contexts.erase(pData->hContext);
-			if (g_lastPresentContext == pData->hContext)
-			{
-				g_lastPresentContext = 0;
-			}
-		}
-		return LOG_RESULT(result);
+		return LOG_RESULT(CreateDCA(pwszDriver, pwszDevice, pszPort, pdm));
 	}
 
 	BOOL CALLBACK findDDrawMonitorRect(HMONITOR hMonitor, HDC /*hdcMonitor*/, LPRECT /*lprcMonitor*/, LPARAM dwData)
@@ -168,67 +150,64 @@ namespace
 	NTSTATUS APIENTRY openAdapterFromHdc(D3DKMT_OPENADAPTERFROMHDC* pData)
 	{
 		LOG_FUNC("D3DKMTOpenAdapterFromHdc", pData);
-		NTSTATUS result = CALL_ORIG_FUNC(D3DKMTOpenAdapterFromHdc)(pData);
+		NTSTATUS result = D3DKMTOpenAdapterFromHdc(pData);
 		if (SUCCEEDED(result))
 		{
-			Compat::ScopedCriticalSection lock(g_vblankCs);
+			Compat::ScopedSrwLockExclusive lock(g_lastOpenAdapterInfoSrwLock);
 			g_lastOpenAdapterInfo = getAdapterInfo(*pData);
 		}
 		return LOG_RESULT(result);
 	}
 
-	NTSTATUS APIENTRY present(D3DKMT_PRESENT* pData)
-	{
-		LOG_FUNC("D3DKMTPresent", pData);
-
-		if (pData->Flags.Flip)
-		{
-			g_lastFlipInterval = pData->FlipInterval;
-			g_lastPresentContext = pData->hContext;
-
-			if (UINT_MAX == g_flipIntervalOverride)
-			{
-				return LOG_RESULT(S_OK);
-			}
-
-			++g_presentCount;
-			if (0 == g_presentCount)
-			{
-				g_presentCount = 1;
-			}
-
-			pData->PresentCount = g_presentCount;
-			pData->Flags.PresentCountValid = 1;
-			pData->FlipInterval = static_cast<D3DDDI_FLIPINTERVAL_TYPE>(g_flipIntervalOverride);
-		}
-
-		return LOG_RESULT(CALL_ORIG_FUNC(D3DKMTPresent)(pData));
-	}
-
 	NTSTATUS APIENTRY queryAdapterInfo(const D3DKMT_QUERYADAPTERINFO* pData)
 	{
 		LOG_FUNC("D3DKMTQueryAdapterInfo", pData);
-		NTSTATUS result = CALL_ORIG_FUNC(D3DKMTQueryAdapterInfo)(pData);
-		if (SUCCEEDED(result) && KMTQAITYPE_UMDRIVERNAME == pData->Type)
+		NTSTATUS result = D3DKMTQueryAdapterInfo(pData);
+		if (SUCCEEDED(result))
 		{
-			auto info = static_cast<D3DKMT_UMDFILENAMEINFO*>(pData->pPrivateDriverData);
-			D3dDdi::onUmdFileNameQueried(info->UmdFileName);
+			switch (pData->Type)
+			{
+			case KMTQAITYPE_UMDRIVERNAME:
+			{
+				auto info = static_cast<D3DKMT_UMDFILENAMEINFO*>(pData->pPrivateDriverData);
+				D3dDdi::onUmdFileNameQueried(info->UmdFileName);
+			}
+			break;
+
+			case KMTQAITYPE_GETSEGMENTSIZE:
+			{
+				auto info = static_cast<D3DKMT_SEGMENTSIZEINFO*>(pData->pPrivateDriverData);
+				const ULONGLONG maxMem = 0x3FFF0000;
+				if (info->DedicatedVideoMemorySize > maxMem)
+				{
+					info->DedicatedVideoMemorySize = maxMem;
+				}
+				if (info->DedicatedVideoMemorySize + info->DedicatedSystemMemorySize > maxMem)
+				{
+					info->DedicatedSystemMemorySize = maxMem - info->DedicatedVideoMemorySize;
+				}
+				if (info->SharedSystemMemorySize > maxMem)
+				{
+					info->SharedSystemMemorySize = maxMem;
+				}
+			}
+			break;
+			}
 		}
 		return LOG_RESULT(result);
 	}
 
-	NTSTATUS APIENTRY setQueuedLimit(const D3DKMT_SETQUEUEDLIMIT* pData)
+	NTSTATUS APIENTRY setGammaRamp(const D3DKMT_SETGAMMARAMP* pData)
 	{
-		LOG_FUNC("D3DKMTSetQueuedLimit", pData);
-		if (D3DKMT_SET_QUEUEDLIMIT_PRESENT == pData->Type)
+		LOG_FUNC("D3DKMTSetGammaRamp", pData);
+		UINT vsyncCounter = D3dDdi::KernelModeThunks::getVsyncCounter();
+		DDraw::RealPrimarySurface::flush();
+		HRESULT result = D3DKMTSetGammaRamp(pData);
+		if (SUCCEEDED(result))
 		{
-			const UINT origLimit = pData->QueuedPresentLimit;
-			const_cast<D3DKMT_SETQUEUEDLIMIT*>(pData)->QueuedPresentLimit = 2;
-			NTSTATUS result = CALL_ORIG_FUNC(D3DKMTSetQueuedLimit)(pData);
-			const_cast<D3DKMT_SETQUEUEDLIMIT*>(pData)->QueuedPresentLimit = origLimit;
-			return LOG_RESULT(result);
+			D3dDdi::KernelModeThunks::waitForVsyncCounter(vsyncCounter + 1);
 		}
-		return LOG_RESULT(CALL_ORIG_FUNC(D3DKMTSetQueuedLimit)(pData));
+		return LOG_RESULT(result);
 	}
 
 	void updateGdiAdapterInfo()
@@ -241,7 +220,7 @@ namespace
 			{
 				D3DKMT_CLOSEADAPTER data = {};
 				data.hAdapter = g_gdiAdapterInfo.adapter;
-				CALL_ORIG_FUNC(D3DKMTCloseAdapter)(&data);
+				D3DKMTCloseAdapter(&data);
 				g_gdiAdapterInfo = {};
 			}
 
@@ -251,7 +230,7 @@ namespace
 
 			D3DKMT_OPENADAPTERFROMHDC data = {};
 			data.hDc = CreateDC(mi.szDevice, mi.szDevice, nullptr, nullptr);
-			if (SUCCEEDED(CALL_ORIG_FUNC(D3DKMTOpenAdapterFromHdc)(&data)))
+			if (SUCCEEDED(D3DKMTOpenAdapterFromHdc(&data)))
 			{
 				g_gdiAdapterInfo = getAdapterInfo(data);
 			}
@@ -260,44 +239,51 @@ namespace
 			lastDisplaySettingsUniqueness = currentDisplaySettingsUniqueness;
 		}
 	}
+
+	DWORD WINAPI vsyncThreadProc(LPVOID /*lpParameter*/)
+	{
+		while (!g_stopVsyncThread)
+		{
+			waitForVerticalBlank();
+
+			{
+				Compat::ScopedSrwLockExclusive lock(g_vsyncCounterSrwLock);
+				++g_vsyncCounter;
+			}
+
+			WakeAllConditionVariable(&g_vsyncCounterCv);
+		}
+		return 0;
+	}
+
+	void waitForVerticalBlank()
+	{
+		D3DKMT_WAITFORVERTICALBLANKEVENT data = {};
+
+		{
+			Compat::ScopedSrwLockShared lock(g_lastOpenAdapterInfoSrwLock);
+			data.hAdapter = g_lastOpenAdapterInfo.adapter;
+			data.VidPnSourceId = g_lastOpenAdapterInfo.vidPnSourceId;
+		}
+
+		if (!data.hAdapter)
+		{
+			updateGdiAdapterInfo();
+			data.hAdapter = g_gdiAdapterInfo.adapter;
+			data.VidPnSourceId = g_gdiAdapterInfo.vidPnSourceId;
+		}
+
+		if (!data.hAdapter || FAILED(D3DKMTWaitForVerticalBlankEvent(&data)))
+		{
+			Sleep(16);
+		}
+	}
 }
 
 namespace D3dDdi
 {
 	namespace KernelModeThunks
 	{
-		UINT getLastFlipInterval()
-		{
-			return g_lastFlipInterval;
-		}
-
-		UINT getLastDisplayedFrameCount()
-		{
-			auto contextIter = g_contexts.find(g_lastPresentContext);
-			if (contextIter == g_contexts.end())
-			{
-				return g_presentCount;
-			}
-
-			D3DKMT_GETDEVICESTATE data = {};
-			data.hDevice = contextIter->second.device;
-			data.StateType = D3DKMT_DEVICESTATE_PRESENT;
-			data.PresentState.VidPnSourceId = g_lastOpenAdapterInfo.vidPnSourceId;
-			D3DKMTGetDeviceState(&data);
-
-			if (0 == data.PresentState.PresentStats.PresentCount)
-			{
-				return g_presentCount;
-			}
-
-			return data.PresentState.PresentStats.PresentCount;
-		}
-
-		UINT getLastSubmittedFrameCount()
-		{
-			return g_presentCount;
-		}
-
 		RECT getMonitorRect()
 		{
 			auto primary(DDraw::PrimarySurface::getPrimary());
@@ -312,7 +298,7 @@ namespace D3dDdi
 			{
 				lastDisplaySettingsUniqueness = currentDisplaySettingsUniqueness;
 				CompatPtr<IUnknown> ddUnk;
-				primary.get()->lpVtbl->GetDDInterface(primary, reinterpret_cast<void**>(&ddUnk.getRef()));
+				primary->GetDDInterface(primary, reinterpret_cast<void**>(&ddUnk.getRef()));
 				CompatPtr<IDirectDraw7> dd7(ddUnk);
 
 				DDDEVICEIDENTIFIER2 di = {};
@@ -322,58 +308,62 @@ namespace D3dDdi
 			return g_lastOpenAdapterInfo.monitorRect;
 		}
 
-		long long getQpcLastVerticalBlank()
+		UINT getVsyncCounter()
 		{
-			return g_qpcLastVerticalBlank;
+			Compat::ScopedSrwLockShared lock(g_vsyncCounterSrwLock);
+			return g_vsyncCounter;
 		}
 
 		void installHooks(HMODULE origDDrawModule)
 		{
-			HOOK_FUNCTION(gdi32, D3DKMTCloseAdapter, closeAdapter);
-			HOOK_FUNCTION(gdi32, D3DKMTCreateContext, createContext);
-			HOOK_FUNCTION(gdi32, D3DKMTCreateDevice, createDevice);
-			HOOK_FUNCTION(gdi32, D3DKMTCreateDCFromMemory, createDcFromMemory);
-			HOOK_FUNCTION(gdi32, D3DKMTDestroyContext, destroyContext);
-			HOOK_FUNCTION(gdi32, D3DKMTOpenAdapterFromHdc, openAdapterFromHdc);
-			HOOK_FUNCTION(gdi32, D3DKMTQueryAdapterInfo, queryAdapterInfo);
-			HOOK_FUNCTION(gdi32, D3DKMTPresent, present);
-			HOOK_FUNCTION(gdi32, D3DKMTSetQueuedLimit, setQueuedLimit);
 			Compat::hookIatFunction(origDDrawModule, "gdi32.dll", "CreateDCA", ddrawCreateDcA);
+			Compat::hookIatFunction(origDDrawModule, "gdi32.dll", "D3DKMTCloseAdapter", closeAdapter);
+			Compat::hookIatFunction(origDDrawModule, "gdi32.dll", "D3DKMTCreateDCFromMemory", createDcFromMemory);
+			Compat::hookIatFunction(origDDrawModule, "gdi32.dll", "D3DKMTOpenAdapterFromHdc", openAdapterFromHdc);
+			Compat::hookIatFunction(origDDrawModule, "gdi32.dll", "D3DKMTQueryAdapterInfo", queryAdapterInfo);
+			Compat::hookIatFunction(origDDrawModule, "gdi32.dll", "D3DKMTSetGammaRamp", setGammaRamp);
 
-			// Functions not available in Windows Vista
-			Compat::hookFunction("gdi32", "D3DKMTCreateContextVirtual",
-				reinterpret_cast<void*&>(g_origD3dKmtCreateContextVirtual), createContextVirtual);
+			g_vsyncThread = CreateThread(nullptr, 0, &vsyncThreadProc, nullptr, 0, nullptr);
+			SetThreadPriority(g_vsyncThread, THREAD_PRIORITY_TIME_CRITICAL);
 		}
 
-		void setFlipIntervalOverride(UINT flipInterval)
+		void setDcFormatOverride(UINT format)
 		{
-			g_flipIntervalOverride = flipInterval;
+			g_dcFormatOverride = static_cast<D3DDDIFORMAT>(format);
 		}
 
-		void waitForVerticalBlank()
+		void setDcPaletteOverride(bool enable)
 		{
-			D3DKMT_WAITFORVERTICALBLANKEVENT data = {};
+			g_dcPaletteOverride = enable;
+		}
 
+		void stopVsyncThread()
+		{
+			g_stopVsyncThread = true;
+			if (WAIT_OBJECT_0 != WaitForSingleObject(g_vsyncThread, 100))
 			{
-				Compat::ScopedCriticalSection lock(g_vblankCs);
-				if (g_lastOpenAdapterInfo.adapter)
-				{
-					data.hAdapter = g_lastOpenAdapterInfo.adapter;
-					data.VidPnSourceId = g_lastOpenAdapterInfo.vidPnSourceId;
-				}
-				else
-				{
-					updateGdiAdapterInfo();
-					data.hAdapter = g_gdiAdapterInfo.adapter;
-					data.VidPnSourceId = g_gdiAdapterInfo.vidPnSourceId;
-				}
+				TerminateThread(g_vsyncThread, 0);
+				Compat::Log() << "The vsync thread was terminated forcefully";
 			}
-			
-			if (data.hAdapter)
+			g_vsyncThread = nullptr;
+		}
+
+		void waitForVsync()
+		{
+			waitForVsyncCounter(getVsyncCounter() + 1);
+		}
+
+		bool waitForVsyncCounter(UINT counter)
+		{
+			bool waited = false;
+			Compat::ScopedSrwLockShared lock(g_vsyncCounterSrwLock);
+			while (static_cast<INT>(g_vsyncCounter - counter) < 0)
 			{
-				D3DKMTWaitForVerticalBlankEvent(&data);
-				g_qpcLastVerticalBlank = Time::queryPerformanceCounter();
+				SleepConditionVariableSRW(&g_vsyncCounterCv, &g_vsyncCounterSrwLock, INFINITE,
+					CONDITION_VARIABLE_LOCKMODE_SHARED);
+				waited = true;
 			}
+			return waited;
 		}
 	}
 }

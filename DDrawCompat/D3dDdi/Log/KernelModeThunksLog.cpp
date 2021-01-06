@@ -45,6 +45,7 @@ std::ostream& operator<<(std::ostream& os, const D3DKMT_CREATEDCFROMMEMORY& data
 {
 	return Compat::LogStruct(os)
 		<< data.pMemory
+		<< data.Format
 		<< data.Width
 		<< data.Height
 		<< data.Pitch
@@ -117,6 +118,15 @@ std::ostream& operator<<(std::ostream& os, const D3DKMT_PRESENT& data)
 		<< data.PrivateDriverDataSize
 		<< data.pPrivateDriverData
 		<< static_cast<UINT>(data.bOptimizeForComposition);
+}
+
+std::ostream& operator<<(std::ostream& os, const D3DKMT_QUERYADAPTERINFO& data)
+{
+	return Compat::LogStruct(os)
+		<< Compat::hex(data.hAdapter)
+		<< data.Type
+		<< data.pPrivateDriverData
+		<< data.PrivateDriverDataSize;
 }
 
 std::ostream& operator<<(std::ostream& os, const D3DKMT_SETQUEUEDLIMIT& data)

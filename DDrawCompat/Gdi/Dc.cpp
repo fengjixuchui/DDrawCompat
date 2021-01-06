@@ -5,7 +5,7 @@
 #include "Common/Hook.h"
 #include "Common/Log.h"
 #include "Common/ScopedCriticalSection.h"
-#include "DDraw/ScopedThreadLock.h"
+#include "D3dDdi/ScopedCriticalSection.h"
 #include "Gdi/Dc.h"
 #include "Gdi/DcCache.h"
 #include "Gdi/Gdi.h"
@@ -185,7 +185,9 @@ namespace Gdi
 				return nullptr;
 			}
 
-			DDraw::ScopedThreadLock ddLock;
+			RECT virtualScreenBounds = Gdi::VirtualScreen::getBounds();
+
+			D3dDdi::ScopedCriticalSection driverLock;
 			Compat::ScopedCriticalSection lock(g_cs);
 			auto it = g_origDcToCompatDc.find(origDc);
 			if (it != g_origDcToCompatDc.end())
@@ -210,7 +212,6 @@ namespace Gdi
 
 			POINT origin = {};
 			GetDCOrgEx(origDc, &origin);
-			RECT virtualScreenBounds = Gdi::VirtualScreen::getBounds();
 			if (wnd && GetDesktopWindow() != wnd)
 			{
 				origin.x -= virtualScreenBounds.left;
